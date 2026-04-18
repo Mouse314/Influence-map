@@ -1,0 +1,236 @@
+/* Базовые стили для интерфейса и полноэкранного холста */
+body {
+	margin: 0;
+	overflow: hidden;
+	background: #111;
+	color: #eee;
+	font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+canvas {
+	position: absolute;
+	inset: 0;
+	display: block;
+	width: 100vw;
+	height: 100vh;
+}
+
+#mapcanvas {
+	z-index: 0;
+}
+
+#glcanvas {
+	z-index: 1;
+	pointer-events: none;
+}
+
+#overlay {
+	z-index: 2;
+	cursor: crosshair;
+}
+
+#clockHud {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+	z-index: 5;
+	padding: 0;
+	min-width: 0;
+	text-align: right;
+	pointer-events: none;
+}
+
+#simDate {
+	font-size: 34px;
+	line-height: 1.1;
+	font-weight: 700;
+	color: #ffffff;
+	letter-spacing: 0.3px;
+	text-shadow: 0 2px 8px rgba(0, 0, 0, 0.65);
+}
+
+#simTime {
+	margin-top: 2px;
+	font-size: 24px;
+	line-height: 1.1;
+	font-weight: 600;
+	color: #ffffff;
+	letter-spacing: 0.5px;
+	text-shadow: 0 2px 8px rgba(0, 0, 0, 0.65);
+}
+
+#ui-panel {
+	position: absolute;
+	bottom: 96px;
+	left: 12px;
+	background: rgba(20, 20, 25, 0.9);
+	padding: 12px;
+	border-radius: 10px;
+	border: 1px solid #444;
+	box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+	backdrop-filter: blur(5px);
+	z-index: 3;
+	max-width: 300px;
+}
+
+h3 {
+	margin: 0 0 10px 0;
+	font-size: 14px;
+	text-transform: uppercase;
+	letter-spacing: 1px;
+	color: #aaa;
+}
+
+label {
+	display: block;
+	margin: 6px 0;
+	cursor: pointer;
+	font-size: 12px;
+}
+
+input[type="range"] {
+	width: 100%;
+	margin-top: 3px;
+}
+
+input[type="date"] {
+	width: 100%;
+	margin-top: 3px;
+	padding: 6px 8px;
+	border: 1px solid #444;
+	border-radius: 6px;
+	background: rgba(10, 10, 14, 0.9);
+	color: #e8e8ef;
+	font-size: 12px;
+	box-sizing: border-box;
+}
+
+.radio-group {
+	padding: 8px;
+	background: rgba(0, 0, 0, 0.3);
+	border-radius: 6px;
+	margin-bottom: 10px;
+}
+
+.animation-group {
+	margin-top: 12px;
+}
+
+.animation-group button {
+	margin-top: 8px;
+}
+
+.compact-hint {
+	margin-top: 8px;
+	margin-bottom: 0;
+}
+
+button {
+	width: 100%;
+	padding: 8px;
+	margin-top: 8px;
+	background: #d32f2f;
+	color: white;
+	border: none;
+	border-radius: 6px;
+	cursor: pointer;
+	font-weight: bold;
+	font-size: 12px;
+}
+
+button:hover {
+	background: #b71c1c;
+}
+
+.hint {
+	font-size: 11px;
+	color: #888;
+	margin-bottom: 8px;
+}
+
+#timelineDock {
+	position: absolute;
+	left: 330px;
+	right: 12px;
+	bottom: 12px;
+	background: rgba(16, 16, 20, 0.92);
+	border: 1px solid #3e3e48;
+	border-radius: 10px;
+	padding: 8px 10px;
+	z-index: 4;
+	box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+	backdrop-filter: blur(4px);
+}
+
+.timeline-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	font-size: 11px;
+	color: #c8cad2;
+	margin-bottom: 6px;
+	gap: 12px;
+}
+
+#timelineSelectedLabel {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+#timelineTrack {
+	position: relative;
+	height: 26px;
+	border-radius: 8px;
+	background: linear-gradient(180deg, rgba(47, 120, 255, 0.18) 0%, rgba(212, 58, 58, 0.18) 100%);
+	border: 1px solid rgba(255, 255, 255, 0.14);
+	cursor: pointer;
+	overflow: hidden;
+}
+
+#timelineMarkers {
+	position: absolute;
+	inset: 0;
+	pointer-events: auto;
+}
+
+.timeline-marker {
+	position: absolute;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	border: 2px solid #101015;
+	background: #f4f4f4;
+	pointer-events: auto;
+	cursor: pointer;
+	padding: 0;
+	margin: 0;
+}
+
+.timeline-marker.active {
+	background: #ffe66b;
+	box-shadow: 0 0 0 2px rgba(255, 230, 107, 0.35);
+}
+
+#timelinePlayhead {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 2px;
+	background: #ffffff;
+	left: 0;
+	box-shadow: 0 0 8px rgba(255, 255, 255, 0.55);
+	pointer-events: none;
+}
+
+@media (max-width: 900px) {
+	#ui-panel {
+		max-width: min(320px, calc(100vw - 24px));
+	}
+
+	#timelineDock {
+		left: 12px;
+	}
+}

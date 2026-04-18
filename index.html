@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Генератор Фронта на WebGL</title>
+	<link rel="stylesheet" href="style.css">
+</head>
+<body>
+	<canvas id="mapcanvas"></canvas>
+	<canvas id="glcanvas"></canvas>
+	<canvas id="overlay"></canvas>
+
+	<div id="clockHud" aria-live="polite">
+		<div id="simDate">01.01.1941</div>
+		<div id="simTime">00:00</div>
+	</div>
+
+	<div id="ui-panel">
+		<h3>Управление картой</h3>
+		<div class="hint">ЛКМ по карте: добавить. ЛКМ по дивизии: выбрать/перетащить. ПКМ по дивизии: удалить. Колесо: зум. Средняя кнопка или Space + ЛКМ: перемещение карты.</div>
+
+		<div class="radio-group">
+			<label><input type="radio" name="faction" value="1" checked> 🔵 Синие (Союзники)</label>
+			<label><input type="radio" name="faction" value="2"> 🔴 Красные (Ось)</label>
+		</div>
+
+		<label>Радиус выбранной дивизии: <span id="unitRadiusValue">-</span>
+			<input type="range" id="unitRadius" min="10" max="180" value="70" disabled>
+		</label>
+
+		<label>Плотность фронта (Сглаживание):
+			<input type="range" id="smooth" min="0.5" max="4" step="0.1" value="1.5">
+		</label>
+
+		<label>Толщина линии фронта: <span id="frontWidthValue">0.10</span>
+			<input type="range" id="frontWidth" min="0.03" max="0.24" step="0.01" value="0.10">
+		</label>
+
+		<div class="radio-group animation-group">
+			<label>Время анимации: <span id="timelineValue">0.0 c</span>
+				<input type="range" id="timeline" min="0" max="120" step="0.1" value="0">
+			</label>
+
+			<label>Длительность: <span id="durationValue">120 c</span>
+				<input type="range" id="duration" min="10" max="300" step="5" value="120">
+			</label>
+
+			<label>Дата 1-го кадра:
+				<input type="date" id="startDate" value="1941-01-01">
+			</label>
+
+			<label>Длительность 1 суток: <span id="dayDurationValue">12.0 c/день</span>
+				<input type="range" id="dayDuration" min="1" max="120" step="0.5" value="12">
+			</label>
+
+			<button id="playPauseBtn" type="button">▶ Пуск</button>
+			<button id="addKeyBtn" type="button">Добавить ключ вручную (опц.)</button>
+			<button id="deleteKeyBtn" type="button">Удалить ключ в текущем времени</button>
+			<div class="hint compact-hint" id="keyframeMeta">Ключи выбранной: -</div>
+		</div>
+
+		<button id="clearBtn">Очистить карту</button>
+	</div>
+
+	<div id="timelineDock" aria-label="Таймлайн ключевых кадров">
+		<div class="timeline-header">
+			<span id="timelineSelectedLabel">Выберите дивизию, чтобы увидеть ее ключи</span>
+			<span id="timelineCurrentLabel">0.0 / 120 c</span>
+		</div>
+		<div id="timelineTrack" role="slider" aria-valuemin="0" aria-valuemax="120" aria-valuenow="0">
+			<div id="timelineMarkers"></div>
+			<div id="timelinePlayhead"></div>
+		</div>
+	</div>
+
+	<script src="script.js"></script>
+</body>
+</html>
