@@ -6,8 +6,10 @@ import {
 	seedInitialUnits,
 	setCurrentTime,
 	setDuration,
+	setTimelineSnapConfig,
 	syncUnitControls,
 	updateDayDurationLabel,
+	updateTimelineSnapUi,
 	updateSimDateTime
 } from './engine/simulation.js';
 import { initPersistence, loadStateFromLocalStorage, setSaveStatus } from './engine/persistence.js';
@@ -31,9 +33,17 @@ dom.iconSizeValue.textContent = `${Math.round(state.unitIconSize)} px`;
 state.defaultUnitType = getUnitTypeSelection();
 syncUnitControls();
 dom.frontWidthValue.textContent = Number(dom.frontWidthInput.value).toFixed(2);
+dom.areaOpacityValue.textContent = `${Math.round(Number(dom.areaOpacityInput.value))}%`;
 state.chrono.startDateMsUtc = parseDateInputToUtcMs(dom.startDateInput.value);
 state.chrono.dayDuration = clamp(parseFloat(dom.dayDurationInput.value), 0.1, 600);
+setTimelineSnapConfig({
+	enabled: dom.timelineSnapEnabledInput.checked,
+	stepValue: parseInt(dom.timelineSnapStepValueInput.value, 10),
+	stepUnit: dom.timelineSnapUnitInput.value,
+	autoKeyEnabled: dom.timelineAutoKeyEnabledInput.checked
+});
 updateDayDurationLabel();
+updateTimelineSnapUi();
 updateSimDateTime();
 renderBottomTimeline();
 

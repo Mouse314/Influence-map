@@ -10,10 +10,17 @@ import {
 	getKeyframeSnap,
 	getLockedKeyIndex,
 	getSelectedUnitRef,
+	getSelectedUnits,
 	getUnitPoseAtTime,
 	getUnitStrengthAtTime,
+	isUnitSelected,
 	worldToScreen
 } from '../engine/simulation.js';
+import {
+	FRONTLINE_FX_GLSL,
+	applyFrontlineFxUniforms,
+	assignFrontlineFxUniformLocations
+} from '../effects/frontlineEffects.js';
 
 const vsSource = `#version 300 es
 in vec2 a_position;
@@ -28,6 +35,8 @@ precision highp int;
 uniform vec2 u_resolution;
 uniform float u_smoothness;
 uniform float u_frontThickness;
+uniform float u_areaOpacity;
+uniform vec3 u_frontLineColor;
 uniform vec2 u_camera;
 uniform float u_zoom;
 
@@ -48,9 +57,12 @@ float falloff = 1.0 - smoothstep(0.0, unitData.z, dist);
 return pow(max(falloff, 0.0), u_smoothness);
 }
 
+${FRONTLINE_FX_GLSL}
+
 void main() {
 vec2 screen = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y);
 vec2 world = (screen - u_resolution * 0.5) / u_zoom + u_camera;
+vec2 sampledWorld = applyTurbulence(world);
 
 float inf1 = 0.0;
 float inf2 = 0.0;
@@ -58,48 +70,112 @@ float near1 = 0.0;
 float near2 = 0.0;
 
 for (int i = 0; i < u_count1; i++) {
-float local = getInfluence(world, readUnit(u_units1Tex, i));
+vec4 unitData = readUnit(u_units1Tex, i);
+float local = getInfluence(sampledWorld, unitData);
 inf1 += local;
 near1 = max(near1, local);
 }
 
 for (int i = 0; i < u_count2; i++) {
-float local = getInfluence(world, readUnit(u_units2Tex, i));
+vec4 unitData = readUnit(u_units2Tex, i);
+float local = getInfluence(sampledWorld, unitData);
 inf2 += local;
 near2 = max(near2, local);
 }
 
 vec3 col1 = vec3(0.15, 0.4, 0.8);
 vec3 col2 = vec3(0.8, 0.2, 0.2);
-vec3 finalColor = vec3(0.0);
-float finalAlpha = 0.0;
+vec3 zoneColor = vec3(0.0);
+float zoneAlpha = 0.0;
+float frontAlpha = 0.0;
 
 float dominant = max(inf1, inf2);
 if (dominant > 0.001) {
 if (inf1 > inf2) {
-finalColor = col1;
+zoneColor = col1;
 } else {
-finalColor = col2;
+zoneColor = col2;
 }
 
 float density = 1.0 - exp(-dominant * 1.35);
 float nearDensity = max(near1, near2);
 float baseAlpha = max(density, nearDensity * 0.85);
-finalAlpha = clamp(baseAlpha * 0.95 + 0.08, 0.0, 0.98);
+zoneAlpha = clamp(baseAlpha * 0.95 + 0.08, 0.0, 0.98) * clamp(u_areaOpacity, 0.0, 1.0);
 
 float ratio = min(inf1, inf2) / max(dominant, 0.0001);
 float contact = min(inf1, inf2);
 float contactStrength = 1.0 - exp(-contact * 1.4);
 float dynamicBand = clamp(u_frontThickness * (0.6 + contactStrength * 2.6), 0.01, 0.9);
 float edge = smoothstep(1.0 - dynamicBand, 1.0, ratio);
+frontAlpha = clamp(edge * (0.82 + contactStrength * 0.35), 0.0, 1.0);
+}
 
-float edgePaint = clamp(edge * (1.15 + contactStrength * 0.75), 0.0, 1.0);
-finalColor = mix(finalColor, vec3(1.0), edgePaint);
-finalAlpha = max(finalAlpha, edge * (0.82 + contactStrength * 0.35));
+float finalAlpha = zoneAlpha + frontAlpha * (1.0 - zoneAlpha);
+vec3 finalColor = zoneColor;
+if (frontAlpha > 0.0001) {
+finalColor = mix(zoneColor, u_frontLineColor, frontAlpha);
 }
 
 outColor = vec4(finalColor, finalAlpha);
 }`;
+
+function parseHexColorToRgb(colorHex) {
+	if (typeof colorHex !== 'string') return [1, 1, 1];
+	const match = /^#([0-9a-fA-F]{6})$/.exec(colorHex.trim());
+	if (!match) return [1, 1, 1];
+	const intColor = Number.parseInt(match[1], 16);
+	const r = ((intColor >> 16) & 255) / 255;
+	const g = ((intColor >> 8) & 255) / 255;
+	const b = (intColor & 255) / 255;
+	return [r, g, b];
+}
+
+function getUnitDeathVisual(unit, currentTime) {
+	const currentStrength = getUnitStrengthAtTime(unit, currentTime);
+	if (currentStrength > 0) {
+		return { dead: false, alpha: 1, gray: false };
+	}
+
+	if (!state.animation.playing) {
+		return { dead: true, alpha: 1, gray: true };
+	}
+
+	const keys = unit.strengthKeyframes || [];
+	let deathTime = null;
+	if (keys.length === 0) {
+		deathTime = 0;
+	} else {
+		const sorted = [...keys].sort((a, b) => a.t - b.t);
+		if (sanitizeStrength(sorted[0].strength) <= 0 && currentTime >= sorted[0].t) {
+			deathTime = sorted[0].t;
+		}
+
+		for (let i = 0; i < sorted.length - 1; i += 1) {
+			const a = sorted[i];
+			const b = sorted[i + 1];
+			if (currentTime < a.t) break;
+			const aStrength = sanitizeStrength(a.strength);
+			const bStrength = sanitizeStrength(b.strength);
+			if (aStrength > 0 && bStrength <= 0) {
+				const span = Math.max(0.00001, b.t - a.t);
+				const k = aStrength / Math.max(aStrength - bStrength, 0.00001);
+				const crossTime = a.t + span * clamp(k, 0, 1);
+				if (crossTime <= currentTime) {
+					deathTime = crossTime;
+				}
+			}
+		}
+
+		if (deathTime === null && currentTime >= sorted[sorted.length - 1].t && sanitizeStrength(sorted[sorted.length - 1].strength) <= 0) {
+			deathTime = sorted[sorted.length - 1].t;
+		}
+	}
+
+	if (deathTime === null) deathTime = currentTime;
+	const fadeDuration = 1.2;
+	const alpha = clamp(1 - (currentTime - deathTime) / fadeDuration, 0, 1);
+	return { dead: true, alpha, gray: false };
+}
 
 function createShader(glContext, type, source) {
 	const shader = glContext.createShader(type);
@@ -176,27 +252,54 @@ export function drawMapLayer() {
 export function drawUnitsLayer() {
 	gfx.overlayCtx.clearRect(0, 0, dom.overlay.width, dom.overlay.height);
 
-	const selected = getSelectedUnitRef();
-	if (selected && selected.keyframes.length > 0) {
-		const lockedIndex = getLockedKeyIndex(selected);
+	const selectedUnits = getSelectedUnits();
+	const primarySelected = getSelectedUnitRef();
+	for (let u = 0; u < selectedUnits.length; u += 1) {
+		const selected = selectedUnits[u].unit;
+		if (!selected || selected.keyframes.length === 0) continue;
+
 		gfx.overlayCtx.save();
-		gfx.overlayCtx.strokeStyle = 'rgba(255, 245, 163, 0.95)';
-		gfx.overlayCtx.lineWidth = 2;
+		gfx.overlayCtx.strokeStyle = primarySelected === selected
+			? 'rgba(255, 245, 163, 0.95)'
+			: 'rgba(170, 203, 255, 0.7)';
+		gfx.overlayCtx.lineWidth = primarySelected === selected ? 2 : 1.5;
 		gfx.overlayCtx.beginPath();
 
-		for (let i = 0; i < selected.keyframes.length; i += 1) {
-			const key = selected.keyframes[i];
-			const pos = worldToScreen(key.x, key.y);
-			if (i === 0) {
-				gfx.overlayCtx.moveTo(pos.x, pos.y);
-			} else {
-				gfx.overlayCtx.lineTo(pos.x, pos.y);
+		if (selected.pathSmoothing === true && selected.keyframes.length >= 3) {
+			const first = worldToScreen(selected.keyframes[0].x, selected.keyframes[0].y);
+			gfx.overlayCtx.moveTo(first.x, first.y);
+			for (let i = 0; i < selected.keyframes.length - 1; i += 1) {
+				const a = selected.keyframes[i];
+				const b = selected.keyframes[i + 1];
+				const span = Math.max(0.00001, b.t - a.t);
+				const steps = 12;
+				for (let s = 1; s <= steps; s += 1) {
+					const sampleTime = a.t + span * (s / steps);
+					const samplePose = getUnitPoseAtTime(selected, sampleTime);
+					const pos = worldToScreen(samplePose.x, samplePose.y);
+					gfx.overlayCtx.lineTo(pos.x, pos.y);
+				}
+			}
+		} else {
+			for (let i = 0; i < selected.keyframes.length; i += 1) {
+				const key = selected.keyframes[i];
+				const pos = worldToScreen(key.x, key.y);
+				if (i === 0) {
+					gfx.overlayCtx.moveTo(pos.x, pos.y);
+				} else {
+					gfx.overlayCtx.lineTo(pos.x, pos.y);
+				}
 			}
 		}
 		gfx.overlayCtx.stroke();
+		gfx.overlayCtx.restore();
+	}
 
-		for (let i = 0; i < selected.keyframes.length; i += 1) {
-			const key = selected.keyframes[i];
+	if (primarySelected && primarySelected.keyframes.length > 0) {
+		const lockedIndex = getLockedKeyIndex(primarySelected);
+		gfx.overlayCtx.save();
+		for (let i = 0; i < primarySelected.keyframes.length; i += 1) {
+			const key = primarySelected.keyframes[i];
 			const pos = worldToScreen(key.x, key.y);
 			const isCurrent = Math.abs(key.t - state.animation.currentTime) <= getKeyframeSnap();
 			const isLocked = i === lockedIndex;
@@ -209,7 +312,21 @@ export function drawUnitsLayer() {
 			gfx.overlayCtx.strokeStyle = isLocked ? '#474c52' : (isCurrent ? '#7f5a00' : '#252525');
 			gfx.overlayCtx.stroke();
 		}
+		gfx.overlayCtx.restore();
+	}
 
+	if (state.pointer.mode === 'selection-box') {
+		const x = Math.min(state.pointer.startX, state.pointer.currentX);
+		const y = Math.min(state.pointer.startY, state.pointer.currentY);
+		const w = Math.abs(state.pointer.currentX - state.pointer.startX);
+		const h = Math.abs(state.pointer.currentY - state.pointer.startY);
+		gfx.overlayCtx.save();
+		gfx.overlayCtx.fillStyle = 'rgba(159, 207, 255, 0.12)';
+		gfx.overlayCtx.strokeStyle = 'rgba(159, 207, 255, 0.9)';
+		gfx.overlayCtx.setLineDash([6, 4]);
+		gfx.overlayCtx.lineWidth = 1.5;
+		gfx.overlayCtx.fillRect(x, y, w, h);
+		gfx.overlayCtx.strokeRect(x, y, w, h);
 		gfx.overlayCtx.restore();
 	}
 
@@ -221,15 +338,21 @@ function paint(units, faction, fillColor, strokeColor) {
 	units.forEach((unit, index) => {
 		const pose = getUnitPoseAtTime(unit, state.animation.currentTime);
 		const animatedStrength = getUnitStrengthAtTime(unit, state.animation.currentTime);
+		const deathVisual = getUnitDeathVisual(unit, state.animation.currentTime);
+		if (deathVisual.alpha <= 0.001) return;
 		const pos = worldToScreen(pose.x, pose.y);
 		if (pos.x < -36 || pos.y < -36 || pos.x > dom.overlay.width + 36 || pos.y > dom.overlay.height + 36) return;
 
-		const isSelected = state.selectedUnit.faction === faction && state.selectedUnit.index === index;
+		const isSelected = isUnitSelected(faction, index);
+		gfx.overlayCtx.save();
+		gfx.overlayCtx.globalAlpha = deathVisual.alpha;
 		buildUnitShapePath(gfx.overlayCtx, unit.type || 'circle', pos.x, pos.y, state.unitIconSize);
-		gfx.overlayCtx.fillStyle = fillColor;
+		gfx.overlayCtx.fillStyle = deathVisual.gray ? '#7d7f84' : fillColor;
 		gfx.overlayCtx.fill();
 		gfx.overlayCtx.lineWidth = isSelected ? 3 : 2;
-		gfx.overlayCtx.strokeStyle = isSelected ? '#fff5a3' : strokeColor;
+		gfx.overlayCtx.strokeStyle = deathVisual.gray
+			? (isSelected ? '#d4d6db' : '#4f5259')
+			: (isSelected ? '#fff5a3' : strokeColor);
 		gfx.overlayCtx.stroke();
 
 		const strength = sanitizeStrength(animatedStrength);
@@ -240,8 +363,9 @@ function paint(units, faction, fillColor, strokeColor) {
 		gfx.overlayCtx.lineWidth = 3;
 		gfx.overlayCtx.strokeStyle = 'rgba(0, 0, 0, 0.75)';
 		gfx.overlayCtx.strokeText(String(strength), pos.x, pos.y + 0.5);
-		gfx.overlayCtx.fillStyle = '#f8f8f8';
+		gfx.overlayCtx.fillStyle = deathVisual.gray ? '#e0e0e0' : '#f8f8f8';
 		gfx.overlayCtx.fillText(String(strength), pos.x, pos.y + 0.5);
+		gfx.overlayCtx.restore();
 	});
 }
 
@@ -250,8 +374,12 @@ export function drawInfluenceLayer() {
 	gfx.gl.uniform2f(gfx.uLocs.res, dom.canvas.width, dom.canvas.height);
 	gfx.gl.uniform1f(gfx.uLocs.smooth, parseFloat(dom.smoothInput.value));
 	gfx.gl.uniform1f(gfx.uLocs.frontThickness, parseFloat(dom.frontWidthInput.value));
+	gfx.gl.uniform1f(gfx.uLocs.areaOpacity, clamp(parseFloat(dom.areaOpacityInput.value) / 100, 0, 1));
+	const frontLineRgb = parseHexColorToRgb(dom.frontLineColorInput.value);
+	gfx.gl.uniform3f(gfx.uLocs.frontLineColor, frontLineRgb[0], frontLineRgb[1], frontLineRgb[2]);
 	gfx.gl.uniform2f(gfx.uLocs.camera, state.camera.x, state.camera.y);
 	gfx.gl.uniform1f(gfx.uLocs.zoom, state.camera.zoom);
+	applyFrontlineFxUniforms(gfx.gl, gfx.uLocs, state.fx);
 
 	const count1 = uploadUnits(gfx.unitsTex1, state.units1);
 	const count2 = uploadUnits(gfx.unitsTex2, state.units2);
@@ -323,6 +451,8 @@ function initWebglResources() {
 		res: gfx.gl.getUniformLocation(gfx.program, 'u_resolution'),
 		smooth: gfx.gl.getUniformLocation(gfx.program, 'u_smoothness'),
 		frontThickness: gfx.gl.getUniformLocation(gfx.program, 'u_frontThickness'),
+		areaOpacity: gfx.gl.getUniformLocation(gfx.program, 'u_areaOpacity'),
+		frontLineColor: gfx.gl.getUniformLocation(gfx.program, 'u_frontLineColor'),
 		camera: gfx.gl.getUniformLocation(gfx.program, 'u_camera'),
 		zoom: gfx.gl.getUniformLocation(gfx.program, 'u_zoom'),
 		c1: gfx.gl.getUniformLocation(gfx.program, 'u_count1'),
@@ -330,6 +460,8 @@ function initWebglResources() {
 		tex1: gfx.gl.getUniformLocation(gfx.program, 'u_units1Tex'),
 		tex2: gfx.gl.getUniformLocation(gfx.program, 'u_units2Tex')
 	};
+
+	Object.assign(gfx.uLocs, assignFrontlineFxUniformLocations(gfx.gl, gfx.program));
 
 	gfx.unitsTex1 = createUnitsTexture();
 	gfx.unitsTex2 = createUnitsTexture();

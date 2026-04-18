@@ -18,7 +18,19 @@
 
 	<div id="ui-panel">
 		<h3>Управление картой</h3>
-		<div class="hint">ЛКМ по карте: добавить. ЛКМ по дивизии: выбрать/перетащить. ПКМ по дивизии: удалить. Колесо: зум. Средняя кнопка или Shift + ЛКМ: перемещение карты. Space: пуск/пауза. ←/→: шаг по кадру.</div>
+		<div class="hint">ЛКМ по карте: добавить. ЛКМ по дивизии: выбрать/перетащить. ПКМ по дивизии: удалить. Колесо: зум. Средняя кнопка или Shift + ЛКМ: перемещение карты. Space: пуск/пауза. ←/→: шаг по кадру. Ctrl+V: вставить карту из буфера.</div>
+
+		<div class="panel-block">
+			<div class="panel-block-title">Режим карты</div>
+			<div class="radio-group">
+				<label><input type="radio" name="mapMode" value="spawn"> Спавн дивизий</label>
+				<label><input type="radio" name="mapMode" value="drag" checked> Drag дивизий</label>
+				<label><input type="radio" name="mapMode" value="select"> Выделение (рамкой)</label>
+			</div>
+		</div>
+
+		<div class="panel-block">
+			<div class="panel-block-title">Управление дивизиями</div>
 
 		<div class="radio-group">
 			<label><input type="radio" name="faction" value="1" checked> 🔵 Синие (Союзники)</label>
@@ -39,9 +51,15 @@
 			<label><input type="radio" name="unitType" value="diamond"> Ромб (танковая)</label>
 		</div>
 
+		<label class="fx-toggle"><input type="checkbox" id="unitPathSpline" disabled> Скругление маршрута выбранной (сплайн)</label>
+
 		<label>Прочность выбранной дивизии: <span id="unitStrengthValue">-</span>
-			<input type="range" id="unitStrength" min="1" max="100" step="1" value="70" disabled>
+			<input type="range" id="unitStrength" min="0" max="100" step="1" value="70" disabled>
 		</label>
+		</div>
+
+		<div class="panel-block">
+			<div class="panel-block-title">Графика</div>
 
 		<label>Плотность фронта (Сглаживание):
 			<input type="range" id="smooth" min="0.5" max="4" step="0.1" value="1.5">
@@ -51,6 +69,36 @@
 			<input type="range" id="frontWidth" min="0.03" max="0.24" step="0.01" value="0.10">
 		</label>
 
+		<label>Прозрачность пятен (красные/синие): <span id="areaOpacityValue">100%</span>
+			<input type="range" id="areaOpacity" min="0" max="100" step="1" value="100">
+		</label>
+
+		<label>Цвет линии фронта:
+			<input type="color" id="frontLineColor" value="#ffffff">
+		</label>
+
+		<details class="effects-menu">
+			<summary>Эффекты фронта</summary>
+			<div class="effects-body">
+				<label class="fx-toggle"><input type="checkbox" id="turbulentEnabled"> Turbulent Displace</label>
+				<label>Сила смещения: <span id="turbulentAmountValue">14.0</span>
+					<input type="range" id="turbulentAmount" min="0" max="40" step="0.5" value="14">
+				</label>
+				<label>Размер турбулентности: <span id="turbulentSizeValue">280</span>
+					<input type="range" id="turbulentSize" min="40" max="800" step="10" value="280">
+				</label>
+				<label>Сложность: <span id="turbulentComplexityValue">3</span>
+					<input type="range" id="turbulentComplexity" min="1" max="6" step="1" value="3">
+				</label>
+				<label>Эволюция: <span id="turbulentEvolutionValue">0.00</span>
+					<input type="range" id="turbulentEvolution" min="0" max="3" step="0.05" value="0.00">
+				</label>
+			</div>
+		</details>
+		</div>
+
+		<div class="panel-block">
+			<div class="panel-block-title">Таймлайн</div>
 		<div class="radio-group animation-group">
 			<label>Время анимации: <span id="timelineValue">0.0 c</span>
 				<input type="range" id="timeline" min="0" max="120" step="0.1" value="0">
@@ -68,10 +116,26 @@
 				<input type="range" id="dayDuration" min="1" max="120" step="0.5" value="12">
 			</label>
 
+			<label class="fx-toggle"><input type="checkbox" id="timelineSnapEnabled"> Примагничивание ключей/ползунка к шагу</label>
+			<div class="snap-grid">
+				<label>Шаг
+					<input type="number" id="timelineSnapStepValue" min="1" max="365" step="1" value="1">
+				</label>
+				<label>Единица
+					<select id="timelineSnapUnit">
+						<option value="day" selected>дни</option>
+						<option value="hour">часы</option>
+					</select>
+				</label>
+			</div>
+			<label class="fx-toggle"><input type="checkbox" id="timelineAutoKeyEnabled" checked> Автоключ всем дивизиям при переходе шага</label>
+			<div class="hint compact-hint" id="timelineSnapInfo">Шаг: 1 день</div>
+
 			<button id="playPauseBtn" type="button">▶ Пуск</button>
 			<button id="addKeyBtn" type="button">Добавить ключ вручную (опц.)</button>
 			<button id="deleteKeyBtn" type="button">Удалить ключ в текущем времени</button>
 			<div class="hint compact-hint" id="keyframeMeta">Ключи выбранной: -</div>
+		</div>
 		</div>
 
 		<div class="radio-group save-group">

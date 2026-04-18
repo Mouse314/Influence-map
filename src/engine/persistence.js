@@ -1,6 +1,11 @@
 import { SAVE_VERSION, STORAGE_KEY } from '../core/constants.js';
 import { dom, state } from '../core/state.js';
 import {
+	normalizeFrontlineFx,
+	serializeFrontlineFx,
+	syncFrontlineFxDom
+} from '../effects/frontlineEffects.js';
+import {
 	clamp,
 	formatDateForInput,
 	normalizeUnitType,
@@ -11,8 +16,10 @@ import {
 	setCurrentTime,
 	setDuration,
 	setPlaying,
+	setTimelineSnapConfig,
 	setUnitTypeSelection,
 	updateDayDurationLabel,
+	updateTimelineSnapUi,
 	updateSimDateTime
 } from './simulation.js';
 
@@ -29,6 +36,7 @@ function serializeUnit(unit) {
 		y: unit.y,
 		radius: unit.radius,
 		type: normalizeUnitType(unit.type),
+		pathSmoothing: unit.pathSmoothing === true,
 		strength: sanitizeStrength(unit.strength),
 		keyframes: (unit.keyframes || []).map((k) => ({
 			t: Number(k.t),
@@ -64,13 +72,22 @@ export function createStateSnapshot() {
 			startDateMsUtc: state.chrono.startDateMsUtc,
 			dayDuration: state.chrono.dayDuration
 		},
+		timelineSnap: {
+			enabled: !!state.timelineSnap.enabled,
+			stepValue: state.timelineSnap.stepValue,
+			stepUnit: state.timelineSnap.stepUnit,
+			autoKeyEnabled: !!state.timelineSnap.autoKeyEnabled
+		},
 		settings: {
 			smooth: parseFloat(dom.smoothInput.value),
 			frontWidth: parseFloat(dom.frontWidthInput.value),
+			areaOpacity: parseFloat(dom.areaOpacityInput.value),
+			frontLineColor: dom.frontLineColorInput.value,
 			iconSize: state.unitIconSize,
 			defaultUnitType: state.defaultUnitType,
 			factionDefaultRadius: { ...state.factionDefaultRadius },
 			factionDefaultStrength: { ...state.factionDefaultStrength },
+			effects: serializeFrontlineFx(state.fx),
 			activeFaction: activeFaction === 2 ? 2 : 1
 		},
 		units1: state.units1.map(serializeUnit),
@@ -125,6 +142,7 @@ function normalizeUnit(raw, fallbackId) {
 		y: keyframes[0].y,
 		radius: keyframes[0].radius,
 		type: normalizeUnitType(raw?.type),
+		pathSmoothing: raw?.pathSmoothing === true,
 		strength: sanitizeStrength(raw?.strength ?? strengthKeyframes[strengthKeyframes.length - 1].strength),
 		keyframes,
 		strengthKeyframes
@@ -156,6 +174,7 @@ export function applyStateSnapshot(snapshot, sourceLabel = 'данных') {
 	const settings = snapshot.settings || {};
 	const animation = snapshot.animation || {};
 	const chrono = snapshot.chrono || {};
+	const timelineSnap = snapshot.timelineSnap || {};
 	const cameraState = snapshot.camera || {};
 
 	state.factionDefaultRadius[1] = Number.isFinite(Number(settings.factionDefaultRadius?.[1])) ? Number(settings.factionDefaultRadius[1]) : state.factionDefaultRadius[1];
@@ -173,6 +192,15 @@ export function applyStateSnapshot(snapshot, sourceLabel = 'данных') {
 	dom.smoothInput.value = String(clamp(Number(settings.smooth) || parseFloat(dom.smoothInput.value), 0.5, 4));
 	dom.frontWidthInput.value = String(clamp(Number(settings.frontWidth) || parseFloat(dom.frontWidthInput.value), 0.03, 0.24));
 	dom.frontWidthValue.textContent = Number(dom.frontWidthInput.value).toFixed(2);
+	const restoredAreaOpacity = Number(settings.areaOpacity);
+	dom.areaOpacityInput.value = String(clamp(Number.isFinite(restoredAreaOpacity) ? restoredAreaOpacity : parseFloat(dom.areaOpacityInput.value), 0, 100));
+	dom.areaOpacityValue.textContent = `${Math.round(Number(dom.areaOpacityInput.value))}%`;
+	if (typeof settings.frontLineColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(settings.frontLineColor)) {
+		dom.frontLineColorInput.value = settings.frontLineColor;
+	}
+
+	Object.assign(state.fx, normalizeFrontlineFx(settings.effects || {}, state.fx));
+	syncFrontlineFxDom(dom, state.fx);
 
 	const activeFaction = settings.activeFaction === 2 ? 2 : 1;
 	const activeFactionInput = document.querySelector(`input[name="faction"][value="${activeFaction}"]`);
@@ -187,11 +215,22 @@ export function applyStateSnapshot(snapshot, sourceLabel = 'данных') {
 	dom.startDateInput.value = formatDateForInput(state.chrono.startDateMsUtc);
 	dom.dayDurationInput.value = String(state.chrono.dayDuration);
 	updateDayDurationLabel();
+	setTimelineSnapConfig({
+		enabled: timelineSnap.enabled,
+		stepValue: timelineSnap.stepValue,
+		stepUnit: timelineSnap.stepUnit,
+		autoKeyEnabled: timelineSnap.autoKeyEnabled
+	});
+	updateTimelineSnapUi();
 
 	state.animation.speed = Number.isFinite(Number(animation.speed)) ? Number(animation.speed) : state.animation.speed;
 	state.animation.loop = animation.loop !== false;
 	setDuration(Number.isFinite(Number(animation.duration)) ? Number(animation.duration) : state.animation.duration);
-	setCurrentTime(Number.isFinite(Number(animation.currentTime)) ? Number(animation.currentTime) : state.animation.currentTime);
+	setCurrentTime(Number.isFinite(Number(animation.currentTime)) ? Number(animation.currentTime) : state.animation.currentTime, {
+		source: 'restore',
+		useSnap: false,
+		autoKey: false
+	});
 
 	clearSelection();
 	setPlaying(false);

@@ -7,7 +7,7 @@ export function clamp(value, min, max) {
 export function sanitizeStrength(value) {
 	const numeric = Number(value);
 	if (!Number.isFinite(numeric)) return DEFAULT_UNIT_STRENGTH;
-	return Math.round(clamp(numeric, 1, 100));
+	return Math.round(clamp(numeric, 0, 100));
 }
 
 export function strengthNorm(value) {

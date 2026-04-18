@@ -2,6 +2,7 @@ import {
 	DEFAULT_ICON_SIZE,
 	DEFAULT_UNIT_STRENGTH
 } from './constants.js';
+import { createFrontlineFxState } from '../effects/frontlineEffects.js';
 
 const mapCanvas = document.getElementById('mapcanvas');
 const canvas = document.getElementById('glcanvas');
@@ -30,10 +31,24 @@ export const dom = {
 	iconSizeValue: document.getElementById('iconSizeValue'),
 	unitStrengthInput: document.getElementById('unitStrength'),
 	unitStrengthValue: document.getElementById('unitStrengthValue'),
+	mapModeInputs: Array.from(document.querySelectorAll('input[name="mapMode"]')),
 	unitTypeInputs: Array.from(document.querySelectorAll('input[name="unitType"]')),
+	unitPathSplineInput: document.getElementById('unitPathSpline'),
 	smoothInput: document.getElementById('smooth'),
 	frontWidthInput: document.getElementById('frontWidth'),
 	frontWidthValue: document.getElementById('frontWidthValue'),
+	areaOpacityInput: document.getElementById('areaOpacity'),
+	areaOpacityValue: document.getElementById('areaOpacityValue'),
+	frontLineColorInput: document.getElementById('frontLineColor'),
+	turbulentEnabledInput: document.getElementById('turbulentEnabled'),
+	turbulentAmountInput: document.getElementById('turbulentAmount'),
+	turbulentAmountValue: document.getElementById('turbulentAmountValue'),
+	turbulentSizeInput: document.getElementById('turbulentSize'),
+	turbulentSizeValue: document.getElementById('turbulentSizeValue'),
+	turbulentComplexityInput: document.getElementById('turbulentComplexity'),
+	turbulentComplexityValue: document.getElementById('turbulentComplexityValue'),
+	turbulentEvolutionInput: document.getElementById('turbulentEvolution'),
+	turbulentEvolutionValue: document.getElementById('turbulentEvolutionValue'),
 	timelineInput: document.getElementById('timeline'),
 	timelineValue: document.getElementById('timelineValue'),
 	durationInput: document.getElementById('duration'),
@@ -56,6 +71,11 @@ export const dom = {
 	startDateInput: document.getElementById('startDate'),
 	dayDurationInput: document.getElementById('dayDuration'),
 	dayDurationValue: document.getElementById('dayDurationValue'),
+	timelineSnapEnabledInput: document.getElementById('timelineSnapEnabled'),
+	timelineSnapStepValueInput: document.getElementById('timelineSnapStepValue'),
+	timelineSnapUnitInput: document.getElementById('timelineSnapUnit'),
+	timelineAutoKeyEnabledInput: document.getElementById('timelineAutoKeyEnabled'),
+	timelineSnapInfo: document.getElementById('timelineSnapInfo'),
 	saveLocalBtn: document.getElementById('saveLocalBtn'),
 	loadLocalBtn: document.getElementById('loadLocalBtn'),
 	exportJsonBtn: document.getElementById('exportJsonBtn'),
@@ -102,12 +122,21 @@ export const state = {
 		startDateMsUtc: Date.UTC(1941, 0, 1),
 		dayDuration: 12
 	},
+	timelineSnap: {
+		enabled: false,
+		stepValue: 1,
+		stepUnit: 'day',
+		autoKeyEnabled: true
+	},
 	nextUnitId: 1,
 	factionDefaultRadius: { 1: 70, 2: 70 },
 	factionDefaultStrength: { 1: DEFAULT_UNIT_STRENGTH, 2: DEFAULT_UNIT_STRENGTH },
 	defaultUnitType: 'circle',
 	unitIconSize: DEFAULT_ICON_SIZE,
+	mapMode: 'drag',
+	fx: createFrontlineFxState(),
 	selectedUnit: { faction: null, index: -1 },
+	selectedUnits: [],
 	pointer: {
 		mode: null,
 		faction: null,
@@ -115,8 +144,13 @@ export const state = {
 		keyIndex: -1,
 		startX: 0,
 		startY: 0,
+		currentX: 0,
+		currentY: 0,
 		startCamX: 0,
 		startCamY: 0,
+		startWorldX: 0,
+		startWorldY: 0,
+		groupStartFrames: [],
 		moved: false
 	},
 	timelineScrub: {

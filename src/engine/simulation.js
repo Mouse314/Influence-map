@@ -77,6 +77,75 @@ export function updateDayDurationLabel() {
 	dom.dayDurationValue.textContent = `${state.chrono.dayDuration.toFixed(1)} c/день`;
 }
 
+export function getTimelineSnapStepSeconds() {
+	const stepValue = Math.max(1, Math.round(Number(state.timelineSnap.stepValue) || 1));
+	const unitSeconds = state.timelineSnap.stepUnit === 'hour'
+		? Math.max(0.0001, state.chrono.dayDuration / 24)
+		: Math.max(0.0001, state.chrono.dayDuration);
+	return stepValue * unitSeconds;
+}
+
+export function snapTimeForTimelineEdit(timeSeconds) {
+	const clampedTime = clamp(timeSeconds, 0, state.animation.duration);
+	if (!state.timelineSnap.enabled) {
+		return clampedTime;
+	}
+
+	const stepSeconds = getTimelineSnapStepSeconds();
+	if (!Number.isFinite(stepSeconds) || stepSeconds <= 0) {
+		return clampedTime;
+	}
+
+	const snapped = Math.round(clampedTime / stepSeconds) * stepSeconds;
+	return clamp(snapped, 0, state.animation.duration);
+}
+
+export function updateTimelineSnapUi() {
+	if (!dom.timelineSnapInfo) return;
+	const stepValue = Math.max(1, Math.round(Number(state.timelineSnap.stepValue) || 1));
+	const unitLabel = state.timelineSnap.stepUnit === 'hour'
+		? (stepValue === 1 ? 'час' : 'часа')
+		: (stepValue === 1 ? 'день' : 'дня');
+	const modeLabel = state.timelineSnap.enabled ? 'вкл' : 'выкл';
+	dom.timelineSnapInfo.textContent = `Шаг: ${stepValue} ${unitLabel} (${modeLabel})`;
+}
+
+export function setTimelineSnapConfig({ enabled, stepValue, stepUnit, autoKeyEnabled } = {}) {
+	if (enabled !== undefined) {
+		state.timelineSnap.enabled = !!enabled;
+	}
+
+	if (stepValue !== undefined) {
+		state.timelineSnap.stepValue = Math.max(1, Math.round(Number(stepValue) || 1));
+	}
+
+	if (stepUnit === 'hour' || stepUnit === 'day') {
+		state.timelineSnap.stepUnit = stepUnit;
+	}
+
+	if (autoKeyEnabled !== undefined) {
+		state.timelineSnap.autoKeyEnabled = !!autoKeyEnabled;
+	}
+
+	if (dom.timelineSnapEnabledInput) {
+		dom.timelineSnapEnabledInput.checked = state.timelineSnap.enabled;
+	}
+
+	if (dom.timelineSnapStepValueInput) {
+		dom.timelineSnapStepValueInput.value = String(state.timelineSnap.stepValue);
+	}
+
+	if (dom.timelineSnapUnitInput) {
+		dom.timelineSnapUnitInput.value = state.timelineSnap.stepUnit;
+	}
+
+	if (dom.timelineAutoKeyEnabledInput) {
+		dom.timelineAutoKeyEnabledInput.checked = state.timelineSnap.autoKeyEnabled;
+	}
+
+	updateTimelineSnapUi();
+}
+
 export function markInteracted() {
 	state.hasUserInteracted = true;
 	state.hooks.onInteraction();
@@ -86,7 +155,100 @@ export function getUnitList(faction) {
 	return faction === 1 ? state.units1 : state.units2;
 }
 
+function getUnitIndexById(faction, unitId) {
+	const list = getUnitList(faction);
+	return list.findIndex((unit) => unit.id === unitId);
+}
+
+function normalizeSelectionEntries(entries) {
+	const unique = [];
+	const seen = new Set();
+	for (let i = 0; i < entries.length; i += 1) {
+		const entry = entries[i];
+		if (!entry) continue;
+		const faction = entry.faction === 2 ? 2 : 1;
+		const list = getUnitList(faction);
+		const unit = list[entry.index];
+		if (!unit) continue;
+		const key = `${faction}:${unit.id}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		unique.push({ faction, id: unit.id });
+	}
+	return unique;
+}
+
+function syncPrimarySelection() {
+	if (state.selectedUnits.length === 0) {
+		state.selectedUnit.faction = null;
+		state.selectedUnit.index = -1;
+		return;
+	}
+
+	const primaryFaction = state.selectedUnit.faction;
+	const primaryIndex = state.selectedUnit.index;
+	if (primaryFaction !== null && primaryIndex >= 0) {
+		const primaryList = getUnitList(primaryFaction);
+		const primaryUnit = primaryList[primaryIndex];
+		if (primaryUnit) {
+			const stillSelected = state.selectedUnits.some((entry) => entry.faction === primaryFaction && entry.id === primaryUnit.id);
+			if (stillSelected) return;
+		}
+	}
+
+	const fallback = state.selectedUnits[0];
+	const idx = getUnitIndexById(fallback.faction, fallback.id);
+	state.selectedUnit.faction = idx >= 0 ? fallback.faction : null;
+	state.selectedUnit.index = idx;
+}
+
+export function setSelectedUnits(entries, primaryEntry = null) {
+	state.selectedUnits = normalizeSelectionEntries(entries);
+
+	if (primaryEntry) {
+		const faction = primaryEntry.faction === 2 ? 2 : 1;
+		const list = getUnitList(faction);
+		const unit = list[primaryEntry.index];
+		if (unit) {
+			const isInSelection = state.selectedUnits.some((entry) => entry.faction === faction && entry.id === unit.id);
+			if (isInSelection) {
+				state.selectedUnit.faction = faction;
+				state.selectedUnit.index = primaryEntry.index;
+			}
+		}
+	}
+
+	syncPrimarySelection();
+	syncUnitControls();
+	state.hooks.renderBottomTimeline();
+}
+
+export function getSelectedUnits() {
+	const resolved = [];
+	for (let i = 0; i < state.selectedUnits.length; i += 1) {
+		const entry = state.selectedUnits[i];
+		const index = getUnitIndexById(entry.faction, entry.id);
+		if (index < 0) continue;
+		resolved.push({
+			faction: entry.faction,
+			index,
+			unit: getUnitList(entry.faction)[index]
+		});
+	}
+	return resolved;
+}
+
+export function isUnitSelected(faction, index) {
+	const list = getUnitList(faction);
+	const unit = list[index];
+	if (!unit) return false;
+	return state.selectedUnits.some((entry) => entry.faction === faction && entry.id === unit.id);
+}
+
 export function getSelectedUnitRef() {
+	if (state.selectedUnit.faction === null || state.selectedUnit.index < 0) {
+		syncPrimarySelection();
+	}
 	if (state.selectedUnit.faction === null || state.selectedUnit.index < 0) return null;
 	const list = getUnitList(state.selectedUnit.faction);
 	return list[state.selectedUnit.index] || null;
@@ -121,6 +283,17 @@ export function getLockedKeyIndex(unit) {
 	return findKeyframeIndexNear(unit, state.animation.currentTime);
 }
 
+function catmullRom(p0, p1, p2, p3, t) {
+	const t2 = t * t;
+	const t3 = t2 * t;
+	return 0.5 * (
+		(2 * p1)
+		+ (-p0 + p2) * t
+		+ (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2
+		+ (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+	);
+}
+
 export function getUnitPoseAtTime(unit, time) {
 	const keys = unit.keyframes;
 	if (!keys || keys.length === 0) {
@@ -149,6 +322,16 @@ export function getUnitPoseAtTime(unit, time) {
 
 		const span = Math.max(0.00001, b.t - a.t);
 		const k = clamp((time - a.t) / span, 0, 1);
+		if (unit.pathSmoothing === true && keys.length >= 3) {
+			const prev = i > 0 ? keys[i - 1] : a;
+			const next = i + 2 < keys.length ? keys[i + 2] : b;
+			return {
+				x: catmullRom(prev.x, a.x, b.x, next.x, k),
+				y: catmullRom(prev.y, a.y, b.y, next.y, k),
+				radius: a.radius + (b.radius - a.radius) * k
+			};
+		}
+
 		return {
 			x: a.x + (b.x - a.x) * k,
 			y: a.y + (b.y - a.y) * k,
@@ -193,8 +376,8 @@ export function getUnitStrengthAtTime(unit, time) {
 	return sanitizeStrength(last.strength);
 }
 
-export function upsertCurrentKeyframe(unit) {
-	const t = clamp(state.animation.currentTime, 0, state.animation.duration);
+export function upsertKeyframeAtTime(unit, timeSeconds) {
+	const t = clamp(timeSeconds, 0, state.animation.duration);
 	const existing = findKeyframeIndexNear(unit, t);
 	if (existing >= 0) {
 		return { frame: unit.keyframes[existing], index: existing, created: false };
@@ -211,8 +394,12 @@ export function upsertCurrentKeyframe(unit) {
 	};
 }
 
-export function upsertCurrentStrengthKeyframe(unit) {
-	const t = clamp(state.animation.currentTime, 0, state.animation.duration);
+export function upsertCurrentKeyframe(unit) {
+	return upsertKeyframeAtTime(unit, state.animation.currentTime);
+}
+
+export function upsertStrengthKeyframeAtTime(unit, timeSeconds) {
+	const t = clamp(timeSeconds, 0, state.animation.duration);
 	if (!unit.strengthKeyframes) unit.strengthKeyframes = [];
 
 	const existing = findStrengthKeyframeIndexNear(unit, t);
@@ -228,6 +415,51 @@ export function upsertCurrentStrengthKeyframe(unit) {
 		index: unit.strengthKeyframes.indexOf(frame),
 		created: true
 	};
+}
+
+export function upsertCurrentStrengthKeyframe(unit) {
+	return upsertStrengthKeyframeAtTime(unit, state.animation.currentTime);
+}
+
+export function movePoseKeyframeToTime(unit, keyframeRef, targetTimeSeconds) {
+	const keyIndex = unit.keyframes.indexOf(keyframeRef);
+	if (keyIndex < 0) return null;
+
+	const targetTime = clamp(targetTimeSeconds, 0, state.animation.duration);
+	const existing = findKeyframeIndexNear(unit, targetTime);
+	if (existing >= 0 && existing !== keyIndex) {
+		const target = unit.keyframes[existing];
+		target.x = keyframeRef.x;
+		target.y = keyframeRef.y;
+		target.radius = keyframeRef.radius;
+		unit.keyframes.splice(keyIndex, 1);
+		sortKeyframes(unit);
+		return target;
+	}
+
+	keyframeRef.t = targetTime;
+	sortKeyframes(unit);
+	return keyframeRef;
+}
+
+export function moveStrengthKeyframeToTime(unit, keyframeRef, targetTimeSeconds) {
+	const keys = unit.strengthKeyframes || [];
+	const keyIndex = keys.indexOf(keyframeRef);
+	if (keyIndex < 0) return null;
+
+	const targetTime = clamp(targetTimeSeconds, 0, state.animation.duration);
+	const existing = findStrengthKeyframeIndexNear(unit, targetTime);
+	if (existing >= 0 && existing !== keyIndex) {
+		const target = keys[existing];
+		target.strength = sanitizeStrength(keyframeRef.strength);
+		keys.splice(keyIndex, 1);
+		sortStrengthKeyframes(unit);
+		return target;
+	}
+
+	keyframeRef.t = targetTime;
+	sortStrengthKeyframes(unit);
+	return keyframeRef;
 }
 
 export function removeKeyframeAtTime(unit, time) {
@@ -264,6 +496,7 @@ export function createUnit(worldX, worldY, radius, type = state.defaultUnitType,
 		y: worldY,
 		radius,
 		type,
+		pathSmoothing: false,
 		strength: sanitizedStrength,
 		keyframes: [],
 		strengthKeyframes: []
@@ -309,13 +542,22 @@ export function getMousePos(e) {
 }
 
 export function updateKeyframeMeta() {
-	const unit = getSelectedUnitRef();
-	if (!unit) {
+	const selectedUnits = getSelectedUnits();
+	if (selectedUnits.length === 0) {
 		dom.keyframeMeta.textContent = 'Ключи выбранной: -';
 		dom.addKeyBtn.disabled = true;
 		dom.deleteKeyBtn.disabled = true;
 		return;
 	}
+
+	if (selectedUnits.length > 1) {
+		dom.keyframeMeta.textContent = `Выбрано дивизий: ${selectedUnits.length} (ключи редактируются у основной)`;
+		dom.addKeyBtn.disabled = false;
+		dom.deleteKeyBtn.disabled = false;
+		return;
+	}
+
+	const unit = selectedUnits[0].unit;
 
 	const poseKeyCount = unit.keyframes.length;
 	const strengthKeyCount = (unit.strengthKeyframes || []).length;
@@ -330,16 +572,50 @@ export function updateKeyframeMeta() {
 }
 
 export function syncUnitControls() {
-	const unit = getSelectedUnitRef();
-	if (!unit) {
+	const selectedUnits = getSelectedUnits();
+	if (selectedUnits.length === 0) {
 		dom.unitRadiusInput.disabled = true;
 		dom.unitRadiusValue.textContent = '-';
 		dom.unitStrengthInput.disabled = true;
 		dom.unitStrengthValue.textContent = '-';
+		dom.unitPathSplineInput.disabled = true;
+		dom.unitPathSplineInput.checked = false;
+		dom.unitPathSplineInput.indeterminate = false;
 		setUnitTypeSelection(state.defaultUnitType);
 		updateKeyframeMeta();
 		return;
 	}
+
+	if (selectedUnits.length > 1) {
+		const radii = selectedUnits.map((entry) => getUnitPoseAtTime(entry.unit, state.animation.currentTime).radius);
+		const strengths = selectedUnits.map((entry) => getUnitStrengthAtTime(entry.unit, state.animation.currentTime));
+		const firstRadius = radii[0];
+		const firstStrength = strengths[0];
+		const sameRadius = radii.every((value) => Math.abs(value - firstRadius) <= 0.001);
+		const sameStrength = strengths.every((value) => value === firstStrength);
+		const allSplineOn = selectedUnits.every((entry) => entry.unit.pathSmoothing === true);
+		const allSplineOff = selectedUnits.every((entry) => entry.unit.pathSmoothing !== true);
+
+		dom.unitRadiusInput.disabled = false;
+		dom.unitRadiusInput.value = String(Math.round(firstRadius));
+		dom.unitRadiusValue.textContent = sameRadius
+			? `${Math.round(firstRadius)} px`
+			: `${selectedUnits.length} div.`;
+
+		dom.unitStrengthInput.disabled = false;
+		dom.unitStrengthInput.value = String(firstStrength);
+		dom.unitStrengthValue.textContent = sameStrength
+			? `${firstStrength}`
+			: `${selectedUnits.length} div.`;
+
+		dom.unitPathSplineInput.disabled = false;
+		dom.unitPathSplineInput.checked = allSplineOn;
+		dom.unitPathSplineInput.indeterminate = !allSplineOn && !allSplineOff;
+		updateKeyframeMeta();
+		return;
+	}
+
+	const unit = selectedUnits[0].unit;
 
 	const pose = getUnitPoseAtTime(unit, state.animation.currentTime);
 	const animatedStrength = getUnitStrengthAtTime(unit, state.animation.currentTime);
@@ -349,37 +625,34 @@ export function syncUnitControls() {
 	dom.unitStrengthInput.disabled = false;
 	dom.unitStrengthInput.value = String(animatedStrength);
 	dom.unitStrengthValue.textContent = `${animatedStrength}`;
+	dom.unitPathSplineInput.disabled = false;
+	dom.unitPathSplineInput.checked = unit.pathSmoothing === true;
+	dom.unitPathSplineInput.indeterminate = false;
 	setUnitTypeSelection(unit.type || 'circle');
 	updateKeyframeMeta();
 }
 
 export function selectUnit(faction, index) {
-	state.selectedUnit.faction = faction;
-	state.selectedUnit.index = index;
-	syncUnitControls();
-	state.hooks.renderBottomTimeline();
+	setSelectedUnits([{ faction, index }], { faction, index });
 }
 
 export function clearSelection() {
 	state.selectedUnit.faction = null;
 	state.selectedUnit.index = -1;
+	state.selectedUnits = [];
 	syncUnitControls();
 	state.hooks.renderBottomTimeline();
 }
 
 export function deleteUnit(faction, index) {
 	const list = getUnitList(faction);
-	if (!list[index]) return;
+	const target = list[index];
+	if (!target) return;
+	const deletedId = target.id;
 	list.splice(index, 1);
-
-	if (state.selectedUnit.faction === faction) {
-		if (state.selectedUnit.index === index) {
-			clearSelection();
-		} else if (state.selectedUnit.index > index) {
-			state.selectedUnit.index -= 1;
-			syncUnitControls();
-		}
-	}
+	state.selectedUnits = state.selectedUnits.filter((entry) => !(entry.faction === faction && entry.id === deletedId));
+	syncPrimarySelection();
+	syncUnitControls();
 
 	updateKeyframeMeta();
 	state.hooks.renderBottomTimeline();
@@ -392,14 +665,87 @@ export function setDuration(value) {
 	dom.timelineInput.max = String(state.animation.duration);
 
 	if (state.animation.currentTime > state.animation.duration) {
-		setCurrentTime(state.animation.duration);
+		setCurrentTime(state.animation.duration, { source: 'duration-change', useSnap: false, autoKey: false });
 	}
 
 	state.hooks.renderBottomTimeline();
 }
 
-export function setCurrentTime(value) {
-	state.animation.currentTime = clamp(value, 0, state.animation.duration);
+function shouldUseSnappingForSource(source, explicitUseSnap) {
+	if (explicitUseSnap !== undefined) return !!explicitUseSnap;
+	if (!state.timelineSnap.enabled) return false;
+	return source !== 'playback' && source !== 'restore';
+}
+
+function shouldAutoCreateKeysForSource(source, explicitAutoKey) {
+	if (state.timelineSnap.autoKeyEnabled !== true) return false;
+	if (explicitAutoKey !== undefined) return !!explicitAutoKey;
+	if (!state.timelineSnap.enabled) return false;
+	return source !== 'playback' && source !== 'restore';
+}
+
+function ensureAutoKeysForAllUnitsBetween(prevTime, nextTime) {
+	const stepSeconds = getTimelineSnapStepSeconds();
+	if (!Number.isFinite(stepSeconds) || stepSeconds <= 0) return false;
+
+	const epsilon = 0.000001;
+	const minTime = Math.max(0, Math.min(prevTime, nextTime));
+	const maxTime = Math.min(state.animation.duration, Math.max(prevTime, nextTime));
+	if (maxTime - minTime < epsilon) return false;
+
+	const startStep = Math.floor((minTime + epsilon) / stepSeconds) + 1;
+	const endStep = Math.floor((maxTime + epsilon) / stepSeconds);
+	if (endStep < startStep) return false;
+
+	const stepIndices = [];
+	for (let step = startStep; step <= endStep; step += 1) {
+		stepIndices.push(step);
+	}
+	if (nextTime < prevTime) {
+		stepIndices.reverse();
+	}
+
+	const allUnits = [...state.units1, ...state.units2];
+	let createdAny = false;
+
+	for (let i = 0; i < stepIndices.length; i += 1) {
+		const t = clamp(stepIndices[i] * stepSeconds, 0, state.animation.duration);
+		for (let j = 0; j < allUnits.length; j += 1) {
+			const unit = allUnits[j];
+			const pose = getUnitPoseAtTime(unit, t);
+			const strength = getUnitStrengthAtTime(unit, t);
+
+			const insertedPose = upsertKeyframeAtTime(unit, t);
+			insertedPose.frame.x = pose.x;
+			insertedPose.frame.y = pose.y;
+			insertedPose.frame.radius = pose.radius;
+			if (insertedPose.created) createdAny = true;
+
+			const insertedStrength = upsertStrengthKeyframeAtTime(unit, t);
+			insertedStrength.frame.strength = strength;
+			if (insertedStrength.created) createdAny = true;
+		}
+	}
+
+	return createdAny;
+}
+
+export function setCurrentTime(value, options = {}) {
+	const prevTime = state.animation.currentTime;
+	const source = options.source || 'manual';
+	const useSnap = shouldUseSnappingForSource(source, options.useSnap);
+	const candidate = clamp(value, 0, state.animation.duration);
+	const nextTime = useSnap ? snapTimeForTimelineEdit(candidate) : candidate;
+
+	if (shouldAutoCreateKeysForSource(source, options.autoKey)) {
+		const created = ensureAutoKeysForAllUnitsBetween(prevTime, nextTime);
+		if (created) {
+			markInteracted();
+			state.hooks.renderBottomTimeline();
+		}
+	}
+
+	state.animation.currentTime = nextTime;
 	dom.timelineInput.value = state.animation.currentTime.toFixed(1);
 	dom.timelineValue.textContent = `${state.animation.currentTime.toFixed(1)} c`;
 	syncUnitControls();
@@ -443,7 +789,7 @@ export function animationTick(timestamp) {
 		}
 	}
 
-	setCurrentTime(nextTime);
+	setCurrentTime(nextTime, { source: 'playback', useSnap: false, autoKey: false });
 	state.hooks.draw();
 
 	if (state.animation.playing) {
