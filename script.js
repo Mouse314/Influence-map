@@ -31,7 +31,8 @@ minZoom: 0.25,
 maxZoom: 5
 };
 
-const UNIT_RADIUS = 10;
+const DEFAULT_ICON_SIZE = 10;
+const DEFAULT_UNIT_STRENGTH = 70;
 const CLICK_THRESHOLD = 4;
 const KEYFRAME_SNAP = 0.07;
 const KEY_HANDLE_RADIUS = 6;
@@ -50,6 +51,9 @@ let animationRaf = null;
 let nextUnitId = 1;
 
 const factionDefaultRadius = { 1: 70, 2: 70 };
+const factionDefaultStrength = { 1: DEFAULT_UNIT_STRENGTH, 2: DEFAULT_UNIT_STRENGTH };
+let defaultUnitType = 'circle';
+let unitIconSize = DEFAULT_ICON_SIZE;
 const selectedUnit = { faction: null, index: -1 };
 
 const pointerState = {
@@ -64,12 +68,16 @@ startCamY: 0,
 moved: false
 };
 
-let isSpaceDown = false;
 let units1 = [];
 let units2 = [];
 
 const unitRadiusInput = document.getElementById('unitRadius');
 const unitRadiusValue = document.getElementById('unitRadiusValue');
+const iconSizeInput = document.getElementById('iconSize');
+const iconSizeValue = document.getElementById('iconSizeValue');
+const unitStrengthInput = document.getElementById('unitStrength');
+const unitStrengthValue = document.getElementById('unitStrengthValue');
+const unitTypeInputs = Array.from(document.querySelectorAll('input[name="unitType"]'));
 const smoothInput = document.getElementById('smooth');
 const frontWidthInput = document.getElementById('frontWidth');
 const frontWidthValue = document.getElementById('frontWidthValue');
@@ -86,6 +94,9 @@ const timelineDock = document.getElementById('timelineDock');
 const timelineTrack = document.getElementById('timelineTrack');
 const timelineMarkers = document.getElementById('timelineMarkers');
 const timelinePlayhead = document.getElementById('timelinePlayhead');
+const timelineStrengthTrack = document.getElementById('timelineStrengthTrack');
+const timelineStrengthMarkers = document.getElementById('timelineStrengthMarkers');
+const timelineStrengthPlayhead = document.getElementById('timelineStrengthPlayhead');
 const timelineSelectedLabel = document.getElementById('timelineSelectedLabel');
 const timelineCurrentLabel = document.getElementById('timelineCurrentLabel');
 const simDateLabel = document.getElementById('simDate');
@@ -93,8 +104,19 @@ const simTimeLabel = document.getElementById('simTime');
 const startDateInput = document.getElementById('startDate');
 const dayDurationInput = document.getElementById('dayDuration');
 const dayDurationValue = document.getElementById('dayDurationValue');
+const saveLocalBtn = document.getElementById('saveLocalBtn');
+const loadLocalBtn = document.getElementById('loadLocalBtn');
+const exportJsonBtn = document.getElementById('exportJsonBtn');
+const importJsonBtn = document.getElementById('importJsonBtn');
+const importJsonInput = document.getElementById('importJsonInput');
+const saveStatus = document.getElementById('saveStatus');
 
 let timelineScrubActive = false;
+let timelineScrubTrack = null;
+
+const STORAGE_KEY = 'influence-map-state-v1';
+const SAVE_VERSION = 1;
+let autosaveTimer = null;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -107,8 +129,77 @@ function clamp(value, min, max) {
 return Math.max(min, Math.min(max, value));
 }
 
+function sanitizeStrength(value) {
+const numeric = Number(value);
+if (!Number.isFinite(numeric)) return DEFAULT_UNIT_STRENGTH;
+return Math.round(clamp(numeric, 1, 100));
+}
+
+function strengthNorm(value) {
+return sanitizeStrength(value) / 100;
+}
+
+function getUnitTypeSelection() {
+const selected = unitTypeInputs.find((input) => input.checked);
+return selected ? selected.value : 'circle';
+}
+
+function setUnitTypeSelection(type) {
+const normalized = ['circle', 'rect', 'diamond'].includes(type) ? type : 'circle';
+unitTypeInputs.forEach((input) => {
+input.checked = input.value === normalized;
+});
+}
+
+function buildUnitShapePath(ctx, type, x, y, size) {
+ctx.beginPath();
+if (type === 'rect') {
+const width = size * 2.1;
+const height = size * 1.45;
+ctx.rect(x - width * 0.5, y - height * 0.5, width, height);
+return;
+}
+
+if (type === 'diamond') {
+const half = size * 1.15;
+ctx.moveTo(x, y - half);
+ctx.lineTo(x + half, y);
+ctx.lineTo(x, y + half);
+ctx.lineTo(x - half, y);
+ctx.closePath();
+return;
+}
+
+ctx.arc(x, y, size, 0, Math.PI * 2);
+}
+
+function pointInsideUnitShape(type, dx, dy, size) {
+const padded = size + 4;
+if (type === 'rect') {
+return Math.abs(dx) <= padded * 1.05 && Math.abs(dy) <= padded * 0.75;
+}
+
+if (type === 'diamond') {
+return Math.abs(dx) + Math.abs(dy) <= padded * 1.2;
+}
+
+return (dx * dx + dy * dy) <= padded * padded;
+}
+
 function formatSeconds(value) {
 return `${value.toFixed(1)} c`;
+}
+
+function getFrameStep() {
+const step = parseFloat(timelineInput.step);
+if (!Number.isFinite(step) || step <= 0) return 0.1;
+return step;
+}
+
+function isInteractiveTarget(target) {
+if (!(target instanceof HTMLElement)) return false;
+const tag = target.tagName;
+return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON';
 }
 
 function parseDateInputToUtcMs(value) {
@@ -121,6 +212,264 @@ if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) 
 return Date.UTC(1941, 0, 1);
 }
 return Date.UTC(year, month - 1, day);
+}
+
+function formatDateForInput(ms) {
+const d = new Date(ms);
+const year = d.getUTCFullYear();
+const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+const day = String(d.getUTCDate()).padStart(2, '0');
+return `${year}-${month}-${day}`;
+}
+
+function setSaveStatus(message, isError = false) {
+if (!saveStatus) return;
+saveStatus.textContent = message;
+saveStatus.style.color = isError ? '#ff8f8f' : '#9ba4b7';
+}
+
+function normalizeUnitType(type) {
+return ['circle', 'rect', 'diamond'].includes(type) ? type : 'circle';
+}
+
+function serializeUnit(unit) {
+return {
+id: unit.id,
+x: unit.x,
+y: unit.y,
+radius: unit.radius,
+type: normalizeUnitType(unit.type),
+strength: sanitizeStrength(unit.strength),
+keyframes: (unit.keyframes || []).map((k) => ({
+t: Number(k.t),
+x: Number(k.x),
+y: Number(k.y),
+radius: Number(k.radius)
+})),
+strengthKeyframes: (unit.strengthKeyframes || []).map((k) => ({
+t: Number(k.t),
+strength: sanitizeStrength(k.strength)
+}))
+};
+}
+
+function createStateSnapshot() {
+const activeFaction = parseInt(document.querySelector('input[name="faction"]:checked')?.value || '1', 10);
+return {
+version: SAVE_VERSION,
+savedAt: new Date().toISOString(),
+nextUnitId,
+camera: {
+x: camera.x,
+y: camera.y,
+zoom: camera.zoom
+},
+animation: {
+currentTime: animationState.currentTime,
+duration: animationState.duration,
+speed: animationState.speed,
+loop: animationState.loop
+},
+chrono: {
+startDateMsUtc: chronoState.startDateMsUtc,
+dayDuration: chronoState.dayDuration
+},
+settings: {
+smooth: parseFloat(smoothInput.value),
+frontWidth: parseFloat(frontWidthInput.value),
+iconSize: unitIconSize,
+defaultUnitType,
+factionDefaultRadius: { ...factionDefaultRadius },
+factionDefaultStrength: { ...factionDefaultStrength },
+activeFaction: activeFaction === 2 ? 2 : 1
+},
+units1: units1.map(serializeUnit),
+units2: units2.map(serializeUnit)
+};
+}
+
+function normalizeUnit(raw, fallbackId) {
+const fallbackX = mapWidth * 0.5;
+const fallbackY = mapHeight * 0.5;
+const fallbackRadius = 70;
+const fallbackStrength = DEFAULT_UNIT_STRENGTH;
+
+const keyframesRaw = Array.isArray(raw?.keyframes) ? raw.keyframes : [];
+const keyframes = keyframesRaw.map((k) => ({
+t: Number(k.t),
+x: Number(k.x),
+y: Number(k.y),
+radius: Number(k.radius)
+})).filter((k) => Number.isFinite(k.t)
+&& Number.isFinite(k.x)
+&& Number.isFinite(k.y)
+&& Number.isFinite(k.radius));
+
+if (keyframes.length === 0) {
+const unitX = Number.isFinite(Number(raw?.x)) ? Number(raw.x) : fallbackX;
+const unitY = Number.isFinite(Number(raw?.y)) ? Number(raw.y) : fallbackY;
+const unitRadius = Number.isFinite(Number(raw?.radius)) ? Number(raw.radius) : fallbackRadius;
+keyframes.push({ t: 0, x: unitX, y: unitY, radius: unitRadius });
+}
+
+keyframes.sort((a, b) => a.t - b.t);
+
+const strengthKeyframesRaw = Array.isArray(raw?.strengthKeyframes) ? raw.strengthKeyframes : [];
+const strengthKeyframes = strengthKeyframesRaw.map((k) => ({
+t: Number(k.t),
+strength: sanitizeStrength(k.strength)
+})).filter((k) => Number.isFinite(k.t));
+
+if (strengthKeyframes.length === 0) {
+strengthKeyframes.push({
+t: keyframes[0].t,
+strength: sanitizeStrength(raw?.strength ?? fallbackStrength)
+});
+}
+
+strengthKeyframes.sort((a, b) => a.t - b.t);
+
+return {
+id: Number.isFinite(Number(raw?.id)) ? Math.max(1, Math.floor(Number(raw.id))) : fallbackId,
+x: keyframes[0].x,
+y: keyframes[0].y,
+radius: keyframes[0].radius,
+type: normalizeUnitType(raw?.type),
+strength: sanitizeStrength(raw?.strength ?? strengthKeyframes[strengthKeyframes.length - 1].strength),
+keyframes,
+strengthKeyframes
+};
+}
+
+function applyStateSnapshot(snapshot, sourceLabel = 'данных') {
+if (!snapshot || typeof snapshot !== 'object') {
+throw new Error('Некорректный формат сохранения');
+}
+
+const loadedUnits1Raw = Array.isArray(snapshot.units1) ? snapshot.units1 : [];
+const loadedUnits2Raw = Array.isArray(snapshot.units2) ? snapshot.units2 : [];
+const loadedUnits1 = loadedUnits1Raw.map((u, index) => normalizeUnit(u, index + 1));
+const loadedUnits2 = loadedUnits2Raw.map((u, index) => normalizeUnit(u, loadedUnits1.length + index + 1));
+
+units1 = loadedUnits1;
+units2 = loadedUnits2;
+
+const maxUnitId = Math.max(
+0,
+...units1.map((u) => u.id),
+...units2.map((u) => u.id)
+);
+
+const snapshotNextId = Number(snapshot.nextUnitId);
+nextUnitId = Number.isFinite(snapshotNextId) ? Math.max(Math.floor(snapshotNextId), maxUnitId + 1) : (maxUnitId + 1);
+
+const settings = snapshot.settings || {};
+const animation = snapshot.animation || {};
+const chrono = snapshot.chrono || {};
+const cameraState = snapshot.camera || {};
+
+factionDefaultRadius[1] = Number.isFinite(Number(settings.factionDefaultRadius?.[1])) ? Number(settings.factionDefaultRadius[1]) : factionDefaultRadius[1];
+factionDefaultRadius[2] = Number.isFinite(Number(settings.factionDefaultRadius?.[2])) ? Number(settings.factionDefaultRadius[2]) : factionDefaultRadius[2];
+factionDefaultStrength[1] = sanitizeStrength(settings.factionDefaultStrength?.[1] ?? factionDefaultStrength[1]);
+factionDefaultStrength[2] = sanitizeStrength(settings.factionDefaultStrength?.[2] ?? factionDefaultStrength[2]);
+
+defaultUnitType = normalizeUnitType(settings.defaultUnitType || defaultUnitType);
+setUnitTypeSelection(defaultUnitType);
+
+unitIconSize = clamp(Number(settings.iconSize) || unitIconSize, 6, 28);
+iconSizeInput.value = String(Math.round(unitIconSize));
+iconSizeValue.textContent = `${Math.round(unitIconSize)} px`;
+
+smoothInput.value = String(clamp(Number(settings.smooth) || parseFloat(smoothInput.value), 0.5, 4));
+frontWidthInput.value = String(clamp(Number(settings.frontWidth) || parseFloat(frontWidthInput.value), 0.03, 0.24));
+frontWidthValue.textContent = Number(frontWidthInput.value).toFixed(2);
+
+const activeFaction = settings.activeFaction === 2 ? 2 : 1;
+const activeFactionInput = document.querySelector(`input[name="faction"][value="${activeFaction}"]`);
+if (activeFactionInput) activeFactionInput.checked = true;
+
+camera.x = Number.isFinite(Number(cameraState.x)) ? Number(cameraState.x) : camera.x;
+camera.y = Number.isFinite(Number(cameraState.y)) ? Number(cameraState.y) : camera.y;
+camera.zoom = clamp(Number(cameraState.zoom) || camera.zoom, camera.minZoom, camera.maxZoom);
+
+chronoState.startDateMsUtc = Number.isFinite(Number(chrono.startDateMsUtc)) ? Number(chrono.startDateMsUtc) : chronoState.startDateMsUtc;
+chronoState.dayDuration = clamp(Number(chrono.dayDuration) || chronoState.dayDuration, 0.1, 600);
+startDateInput.value = formatDateForInput(chronoState.startDateMsUtc);
+dayDurationInput.value = String(chronoState.dayDuration);
+updateDayDurationLabel();
+
+animationState.speed = Number.isFinite(Number(animation.speed)) ? Number(animation.speed) : animationState.speed;
+animationState.loop = animation.loop !== false;
+setDuration(Number.isFinite(Number(animation.duration)) ? Number(animation.duration) : animationState.duration);
+setCurrentTime(Number.isFinite(Number(animation.currentTime)) ? Number(animation.currentTime) : animationState.currentTime);
+
+clearSelection();
+setPlaying(false);
+hasUserInteracted = true;
+draw();
+
+setSaveStatus(`Загружено из ${sourceLabel}: ${units1.length + units2.length} див.`);
+}
+
+function saveStateToLocalStorage(silent = false) {
+try {
+localStorage.setItem(STORAGE_KEY, JSON.stringify(createStateSnapshot()));
+if (!silent) {
+setSaveStatus(`Сохранено в браузер: ${new Date().toLocaleTimeString('ru-RU')}`);
+}
+return true;
+} catch (error) {
+setSaveStatus(`Ошибка сохранения: ${error.message}`, true);
+return false;
+}
+}
+
+function loadStateFromLocalStorage(showMissingMessage = true) {
+try {
+const raw = localStorage.getItem(STORAGE_KEY);
+if (!raw) {
+if (showMissingMessage) {
+setSaveStatus('В браузере нет сохраненного состояния');
+}
+return false;
+}
+const parsed = JSON.parse(raw);
+applyStateSnapshot(parsed, 'браузера');
+return true;
+} catch (error) {
+setSaveStatus(`Ошибка загрузки: ${error.message}`, true);
+return false;
+}
+}
+
+function exportStateToJson() {
+const snapshot = createStateSnapshot();
+const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
+const url = URL.createObjectURL(blob);
+const link = document.createElement('a');
+link.href = url;
+link.download = `influence-map-${Date.now()}.json`;
+document.body.appendChild(link);
+link.click();
+link.remove();
+URL.revokeObjectURL(url);
+setSaveStatus('JSON экспортирован');
+}
+
+function importStateFromJsonText(text) {
+const parsed = JSON.parse(text);
+applyStateSnapshot(parsed, 'JSON');
+saveStateToLocalStorage(true);
+}
+
+function scheduleAutosave() {
+if (autosaveTimer !== null) {
+clearTimeout(autosaveTimer);
+}
+autosaveTimer = setTimeout(() => {
+autosaveTimer = null;
+saveStateToLocalStorage(true);
+}, 350);
 }
 
 function formatDateFromUtcMs(ms) {
@@ -165,11 +514,13 @@ timelineTrack.setAttribute('aria-valuenow', String(animationState.currentTime.to
 }
 
 function updateTimelinePlayhead() {
-timelinePlayhead.style.left = `${timeToPercent(animationState.currentTime)}%`;
+const left = `${timeToPercent(animationState.currentTime)}%`;
+timelinePlayhead.style.left = left;
+timelineStrengthPlayhead.style.left = left;
 }
 
 function updateTimelineMarkersSelection() {
-const markers = timelineMarkers.querySelectorAll('.timeline-marker');
+const markers = timelineDock.querySelectorAll('.timeline-marker');
 markers.forEach((marker) => {
 const t = parseFloat(marker.dataset.time);
 const isActive = Math.abs(t - animationState.currentTime) <= KEYFRAME_SNAP;
@@ -177,29 +528,14 @@ marker.classList.toggle('active', isActive);
 });
 }
 
-function renderBottomTimeline() {
-const unit = getSelectedUnitRef();
-timelineMarkers.innerHTML = '';
-
-if (!unit) {
-timelineSelectedLabel.textContent = 'Выберите дивизию, чтобы увидеть ее ключи';
-updateTimelinePlayhead();
-updateTimelineCurrentLabel();
-return;
-}
-
-timelineSelectedLabel.textContent = `Дивизия: ключей ${unit.keyframes.length}`;
-
-const sorted = [...unit.keyframes].sort((a, b) => a.t - b.t);
-for (let i = 0; i < sorted.length; i += 1) {
-const key = sorted[i];
+function appendTimelineMarker(container, time, titlePrefix, markerClass = '') {
 const marker = document.createElement('button');
 marker.type = 'button';
-marker.className = 'timeline-marker';
-marker.style.left = `${timeToPercent(key.t)}%`;
-marker.dataset.time = key.t.toFixed(4);
-marker.title = `Кадр: ${formatSeconds(key.t)}`;
-if (Math.abs(key.t - animationState.currentTime) <= KEYFRAME_SNAP) {
+marker.className = markerClass ? `timeline-marker ${markerClass}` : 'timeline-marker';
+marker.style.left = `${timeToPercent(time)}%`;
+marker.dataset.time = time.toFixed(4);
+marker.title = `${titlePrefix}: ${formatSeconds(time)}`;
+if (Math.abs(time - animationState.currentTime) <= KEYFRAME_SNAP) {
 marker.classList.add('active');
 }
 
@@ -210,25 +546,52 @@ event.stopPropagation();
 marker.addEventListener('click', (event) => {
 event.stopPropagation();
 setPlaying(false);
-setCurrentTime(key.t);
+setCurrentTime(time);
 draw();
 });
 
-timelineMarkers.appendChild(marker);
+container.appendChild(marker);
+}
+
+function renderBottomTimeline() {
+const unit = getSelectedUnitRef();
+timelineMarkers.innerHTML = '';
+timelineStrengthMarkers.innerHTML = '';
+
+if (!unit) {
+timelineSelectedLabel.textContent = 'Выберите дивизию, чтобы увидеть ее ключи';
+updateTimelinePlayhead();
+updateTimelineCurrentLabel();
+return;
+}
+
+const strengthKeys = unit.strengthKeyframes || [];
+timelineSelectedLabel.textContent = `Дивизия: позиция ${unit.keyframes.length}, прочность ${strengthKeys.length}`;
+
+const sorted = [...unit.keyframes].sort((a, b) => a.t - b.t);
+for (let i = 0; i < sorted.length; i += 1) {
+const key = sorted[i];
+appendTimelineMarker(timelineMarkers, key.t, 'Кадр позиции');
+}
+
+const sortedStrength = [...strengthKeys].sort((a, b) => a.t - b.t);
+for (let i = 0; i < sortedStrength.length; i += 1) {
+appendTimelineMarker(timelineStrengthMarkers, sortedStrength[i].t, 'Кадр прочности', 'strength-marker');
 }
 
 updateTimelinePlayhead();
 updateTimelineCurrentLabel();
 }
 
-function seekTimelineByClientX(clientX) {
-const rect = timelineTrack.getBoundingClientRect();
+function seekTimelineByClientX(clientX, trackElement = timelineTrack) {
+const rect = trackElement.getBoundingClientRect();
 const ratio = clamp((clientX - rect.left) / Math.max(rect.width, 1), 0, 1);
 setCurrentTime(animationState.duration * ratio);
 }
 
 function markInteracted() {
 hasUserInteracted = true;
+scheduleAutosave();
 }
 
 function getUnitList(faction) {
@@ -245,9 +608,22 @@ function sortKeyframes(unit) {
 unit.keyframes.sort((a, b) => a.t - b.t);
 }
 
+function sortStrengthKeyframes(unit) {
+if (!unit.strengthKeyframes) unit.strengthKeyframes = [];
+unit.strengthKeyframes.sort((a, b) => a.t - b.t);
+}
+
 function findKeyframeIndexNear(unit, time, epsilon = KEYFRAME_SNAP) {
 for (let i = 0; i < unit.keyframes.length; i += 1) {
 if (Math.abs(unit.keyframes[i].t - time) <= epsilon) return i;
+}
+return -1;
+}
+
+function findStrengthKeyframeIndexNear(unit, time, epsilon = KEYFRAME_SNAP) {
+const keys = unit.strengthKeyframes || [];
+for (let i = 0; i < keys.length; i += 1) {
+if (Math.abs(keys[i].t - time) <= epsilon) return i;
 }
 return -1;
 }
@@ -295,6 +671,40 @@ radius: a.radius + (b.radius - a.radius) * k
 return { x: last.x, y: last.y, radius: last.radius };
 }
 
+function getUnitStrengthAtTime(unit, time) {
+const fallback = sanitizeStrength(unit.strength);
+const keys = unit.strengthKeyframes || [];
+
+if (keys.length === 0) {
+return fallback;
+}
+
+if (keys.length === 1) {
+return sanitizeStrength(keys[0].strength);
+}
+
+if (time <= keys[0].t) {
+return sanitizeStrength(keys[0].strength);
+}
+
+const last = keys[keys.length - 1];
+if (time >= last.t) {
+return sanitizeStrength(last.strength);
+}
+
+for (let i = 0; i < keys.length - 1; i += 1) {
+const a = keys[i];
+const b = keys[i + 1];
+if (time < a.t || time > b.t) continue;
+
+const span = Math.max(0.00001, b.t - a.t);
+const k = clamp((time - a.t) / span, 0, 1);
+return sanitizeStrength(a.strength + (b.strength - a.strength) * k);
+}
+
+return sanitizeStrength(last.strength);
+}
+
 function ensureKeyframeAtTime(unit, time) {
 const t = clamp(time, 0, animationState.duration);
 const existing = findKeyframeIndexNear(unit, t);
@@ -325,6 +735,25 @@ created: true
 };
 }
 
+function upsertCurrentStrengthKeyframe(unit) {
+const t = clamp(animationState.currentTime, 0, animationState.duration);
+if (!unit.strengthKeyframes) unit.strengthKeyframes = [];
+
+const existing = findStrengthKeyframeIndexNear(unit, t);
+if (existing >= 0) {
+return { frame: unit.strengthKeyframes[existing], index: existing, created: false };
+}
+
+const frame = { t, strength: getUnitStrengthAtTime(unit, t) };
+unit.strengthKeyframes.push(frame);
+sortStrengthKeyframes(unit);
+return {
+frame,
+index: unit.strengthKeyframes.indexOf(frame),
+created: true
+};
+}
+
 function removeKeyframeAtTime(unit, time) {
 const idx = findKeyframeIndexNear(unit, time);
 if (idx < 0) return false;
@@ -339,22 +768,39 @@ unit.radius = removed.radius;
 return true;
 }
 
-function createUnit(worldX, worldY, radius) {
+function removeStrengthKeyframeAtTime(unit, time) {
+const idx = findStrengthKeyframeIndexNear(unit, time);
+if (idx < 0) return false;
+
+const removed = unit.strengthKeyframes[idx];
+unit.strengthKeyframes.splice(idx, 1);
+if (unit.strengthKeyframes.length === 0) {
+unit.strength = sanitizeStrength(removed.strength);
+}
+return true;
+}
+
+function createUnit(worldX, worldY, radius, type = defaultUnitType, strength = DEFAULT_UNIT_STRENGTH) {
+const sanitizedStrength = sanitizeStrength(strength);
 const unit = {
 id: nextUnitId,
 x: worldX,
 y: worldY,
 radius,
-keyframes: []
+type,
+strength: sanitizedStrength,
+keyframes: [],
+strengthKeyframes: []
 };
 nextUnitId += 1;
 unit.keyframes.push({ t: animationState.currentTime, x: worldX, y: worldY, radius });
+unit.strengthKeyframes.push({ t: animationState.currentTime, strength: sanitizedStrength });
 return unit;
 }
 
 function seedInitialUnits() {
-units1 = [createUnit(mapWidth * 0.35, mapHeight * 0.5, 70)];
-units2 = [createUnit(mapWidth * 0.65, mapHeight * 0.5, 70)];
+units1 = [createUnit(mapWidth * 0.35, mapHeight * 0.5, 70, 'rect', factionDefaultStrength[1])];
+units2 = [createUnit(mapWidth * 0.65, mapHeight * 0.5, 70, 'diamond', factionDefaultStrength[2])];
 }
 
 seedInitialUnits();
@@ -397,13 +843,16 @@ deleteKeyBtn.disabled = true;
 return;
 }
 
-const keyCount = unit.keyframes.length;
-const hasCurrentKey = findKeyframeIndexNear(unit, animationState.currentTime) >= 0;
-keyframeMeta.textContent = hasCurrentKey
-? `Ключи выбранной: ${keyCount} (ключ в текущем времени)`
-: `Ключи выбранной: ${keyCount}`;
+const poseKeyCount = unit.keyframes.length;
+const strengthKeyCount = (unit.strengthKeyframes || []).length;
+const hasCurrentPoseKey = findKeyframeIndexNear(unit, animationState.currentTime) >= 0;
+const hasCurrentStrengthKey = findStrengthKeyframeIndexNear(unit, animationState.currentTime) >= 0;
+const hasCurrentAnyKey = hasCurrentPoseKey || hasCurrentStrengthKey;
+keyframeMeta.textContent = hasCurrentAnyKey
+? `Ключи: позиция ${poseKeyCount}, прочность ${strengthKeyCount} (есть ключ в текущем времени)`
+: `Ключи: позиция ${poseKeyCount}, прочность ${strengthKeyCount}`;
 addKeyBtn.disabled = false;
-deleteKeyBtn.disabled = !hasCurrentKey;
+deleteKeyBtn.disabled = !hasCurrentAnyKey;
 }
 
 function syncUnitRadiusControl() {
@@ -411,14 +860,22 @@ const unit = getSelectedUnitRef();
 if (!unit) {
 unitRadiusInput.disabled = true;
 unitRadiusValue.textContent = '-';
+unitStrengthInput.disabled = true;
+unitStrengthValue.textContent = '-';
+setUnitTypeSelection(defaultUnitType);
 updateKeyframeMeta();
 return;
 }
 
 const pose = getUnitPoseAtTime(unit, animationState.currentTime);
+const animatedStrength = getUnitStrengthAtTime(unit, animationState.currentTime);
 unitRadiusInput.disabled = false;
 unitRadiusInput.value = String(Math.round(pose.radius));
 unitRadiusValue.textContent = `${Math.round(pose.radius)} px`;
+unitStrengthInput.disabled = false;
+unitStrengthInput.value = String(animatedStrength);
+unitStrengthValue.textContent = `${animatedStrength}`;
+setUnitTypeSelection(unit.type || 'circle');
 updateKeyframeMeta();
 }
 
@@ -534,6 +991,9 @@ unit.x = frame.x;
 unit.y = frame.y;
 unit.radius = frame.radius;
 
+const strengthInserted = upsertCurrentStrengthKeyframe(unit);
+strengthInserted.frame.strength = getUnitStrengthAtTime(unit, animationState.currentTime);
+
 updateKeyframeMeta();
 renderBottomTimeline();
 draw();
@@ -543,7 +1003,9 @@ function deleteKeyframeForSelected() {
 const unit = getSelectedUnitRef();
 if (!unit) return;
 
-if (!removeKeyframeAtTime(unit, animationState.currentTime)) {
+const removedPose = removeKeyframeAtTime(unit, animationState.currentTime);
+const removedStrength = removeStrengthKeyframeAtTime(unit, animationState.currentTime);
+if (!removedPose && !removedStrength) {
 updateKeyframeMeta();
 return;
 }
@@ -552,6 +1014,7 @@ const pose = getUnitPoseAtTime(unit, animationState.currentTime);
 unit.x = pose.x;
 unit.y = pose.y;
 unit.radius = pose.radius;
+unit.strength = getUnitStrengthAtTime(unit, animationState.currentTime);
 
 syncUnitRadiusControl();
 renderBottomTimeline();
@@ -562,32 +1025,39 @@ function addUnitAtScreen(x, y) {
 const faction = parseInt(document.querySelector('input[name="faction"]:checked').value, 10);
 const list = getUnitList(faction);
 const world = screenToWorld(x, y);
-const newUnit = createUnit(world.x, world.y, factionDefaultRadius[faction] || 70);
+const newUnit = createUnit(
+world.x,
+world.y,
+factionDefaultRadius[faction] || 70,
+defaultUnitType,
+factionDefaultStrength[faction] || DEFAULT_UNIT_STRENGTH
+);
 list.push(newUnit);
 selectUnit(faction, list.length - 1);
 markInteracted();
 }
 
 function findUnitAtScreen(x, y) {
-const hitRadius = UNIT_RADIUS + 4;
-const hitRadiusSq = hitRadius * hitRadius;
+const iconSize = unitIconSize;
 
 for (let i = units1.length - 1; i >= 0; i -= 1) {
-const pose = getUnitPoseAtTime(units1[i], animationState.currentTime);
+const unit = units1[i];
+const pose = getUnitPoseAtTime(unit, animationState.currentTime);
 const screen = worldToScreen(pose.x, pose.y);
 const dx = screen.x - x;
 const dy = screen.y - y;
-if (dx * dx + dy * dy <= hitRadiusSq) {
+if (pointInsideUnitShape(unit.type || 'circle', dx, dy, iconSize)) {
 return { faction: 1, index: i };
 }
 }
 
 for (let i = units2.length - 1; i >= 0; i -= 1) {
-const pose = getUnitPoseAtTime(units2[i], animationState.currentTime);
+const unit = units2[i];
+const pose = getUnitPoseAtTime(unit, animationState.currentTime);
 const screen = worldToScreen(pose.x, pose.y);
 const dx = screen.x - x;
 const dy = screen.y - y;
-if (dx * dx + dy * dy <= hitRadiusSq) {
+if (pointInsideUnitShape(unit.type || 'circle', dx, dy, iconSize)) {
 return { faction: 2, index: i };
 }
 }
@@ -677,17 +1147,28 @@ overlayCtx.restore();
 function paint(units, faction, fillColor, strokeColor) {
 units.forEach((unit, index) => {
 const pose = getUnitPoseAtTime(unit, animationState.currentTime);
+const animatedStrength = getUnitStrengthAtTime(unit, animationState.currentTime);
 const pos = worldToScreen(pose.x, pose.y);
-if (pos.x < -30 || pos.y < -30 || pos.x > overlay.width + 30 || pos.y > overlay.height + 30) return;
+if (pos.x < -36 || pos.y < -36 || pos.x > overlay.width + 36 || pos.y > overlay.height + 36) return;
 
 const isSelected = selectedUnit.faction === faction && selectedUnit.index === index;
-overlayCtx.beginPath();
-overlayCtx.arc(pos.x, pos.y, UNIT_RADIUS, 0, Math.PI * 2);
+buildUnitShapePath(overlayCtx, unit.type || 'circle', pos.x, pos.y, unitIconSize);
 overlayCtx.fillStyle = fillColor;
 overlayCtx.fill();
 overlayCtx.lineWidth = isSelected ? 3 : 2;
 overlayCtx.strokeStyle = isSelected ? '#fff5a3' : strokeColor;
 overlayCtx.stroke();
+
+const strength = sanitizeStrength(animatedStrength);
+const fontSize = clamp(Math.round(unitIconSize * 0.85), 9, 14);
+overlayCtx.font = `700 ${fontSize}px Segoe UI, Tahoma, Geneva, Verdana, sans-serif`;
+overlayCtx.textAlign = 'center';
+overlayCtx.textBaseline = 'middle';
+overlayCtx.lineWidth = 3;
+overlayCtx.strokeStyle = 'rgba(0, 0, 0, 0.75)';
+overlayCtx.strokeText(String(strength), pos.x, pos.y + 0.5);
+overlayCtx.fillStyle = '#f8f8f8';
+overlayCtx.fillText(String(strength), pos.x, pos.y + 0.5);
 });
 }
 
@@ -862,10 +1343,12 @@ const buffer = new Float32Array(width * 4);
 
 for (let i = 0; i < count; i += 1) {
 const pose = getUnitPoseAtTime(units[i], animationState.currentTime);
+const animatedStrength = getUnitStrengthAtTime(units[i], animationState.currentTime);
+const influenceRadius = pose.radius * strengthNorm(animatedStrength);
 const k = i * 4;
 buffer[k] = pose.x;
 buffer[k + 1] = pose.y;
-buffer[k + 2] = pose.radius;
+buffer[k + 2] = influenceRadius;
 buffer[k + 3] = 1.0;
 }
 
@@ -893,15 +1376,22 @@ draw();
 window.addEventListener('resize', resize);
 
 window.addEventListener('keydown', (e) => {
-if (e.code === 'Space') {
-isSpaceDown = true;
-e.preventDefault();
-}
-});
+if (isInteractiveTarget(e.target)) return;
 
-window.addEventListener('keyup', (e) => {
 if (e.code === 'Space') {
-isSpaceDown = false;
+e.preventDefault();
+if (e.repeat) return;
+setPlaying(!animationState.playing);
+draw();
+return;
+}
+
+if (e.code === 'ArrowRight' || e.code === 'ArrowLeft') {
+e.preventDefault();
+setPlaying(false);
+const delta = e.code === 'ArrowRight' ? getFrameStep() : -getFrameStep();
+setCurrentTime(animationState.currentTime + delta);
+draw();
 }
 });
 
@@ -922,7 +1412,7 @@ draw();
 
 overlay.addEventListener('mousedown', (e) => {
 const pos = getMousePos(e);
-const handleHit = e.button === 0 && !isSpaceDown ? findSelectedKeyHandleAtScreen(pos.x, pos.y) : null;
+const handleHit = e.button === 0 && !e.shiftKey ? findSelectedKeyHandleAtScreen(pos.x, pos.y) : null;
 const hit = findUnitAtScreen(pos.x, pos.y);
 
 if (e.button === 2) {
@@ -935,7 +1425,7 @@ draw();
 return;
 }
 
-if (e.button === 1 || (e.button === 0 && isSpaceDown)) {
+if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
 pointerState.mode = 'pan';
 pointerState.startX = pos.x;
 pointerState.startY = pos.y;
@@ -980,7 +1470,7 @@ pointerState.moved = false;
 
 window.addEventListener('mousemove', (e) => {
 if (timelineScrubActive) {
-seekTimelineByClientX(e.clientX);
+seekTimelineByClientX(e.clientX, timelineScrubTrack || timelineTrack);
 draw();
 return;
 }
@@ -1040,6 +1530,7 @@ draw();
 window.addEventListener('mouseup', (e) => {
 if (timelineScrubActive && e.button === 0) {
 timelineScrubActive = false;
+timelineScrubTrack = null;
 }
 
 if (!pointerState.mode) return;
@@ -1048,7 +1539,7 @@ const pos = getMousePos(e);
 const travel = Math.hypot(pos.x - pointerState.startX, pos.y - pointerState.startY);
 const isClick = travel <= CLICK_THRESHOLD;
 
-if (pointerState.mode === 'map' && e.button === 0 && isClick && !isSpaceDown) {
+if (pointerState.mode === 'map' && e.button === 0 && isClick && !e.shiftKey) {
 addUnitAtScreen(pos.x, pos.y);
 }
 
@@ -1070,6 +1561,39 @@ markInteracted();
 draw();
 });
 
+saveLocalBtn.addEventListener('click', () => {
+saveStateToLocalStorage(false);
+});
+
+loadLocalBtn.addEventListener('click', () => {
+setPlaying(false);
+loadStateFromLocalStorage(true);
+});
+
+exportJsonBtn.addEventListener('click', () => {
+exportStateToJson();
+});
+
+importJsonBtn.addEventListener('click', () => {
+importJsonInput.click();
+});
+
+importJsonInput.addEventListener('change', async (event) => {
+const file = event.target.files && event.target.files[0];
+if (!file) return;
+
+try {
+setPlaying(false);
+const text = await file.text();
+importStateFromJsonText(text);
+setSaveStatus(`Импортировано из ${file.name}`);
+} catch (error) {
+setSaveStatus(`Ошибка импорта: ${error.message}`, true);
+} finally {
+importJsonInput.value = '';
+}
+});
+
 unitRadiusInput.addEventListener('input', () => {
 const unit = getSelectedUnitRef();
 if (!unit) return;
@@ -1083,6 +1607,50 @@ unitRadiusValue.textContent = `${Math.round(value)} px`;
 if (inserted.created) renderBottomTimeline();
 markInteracted();
 draw();
+});
+
+iconSizeInput.addEventListener('input', () => {
+unitIconSize = clamp(parseFloat(iconSizeInput.value), 6, 28);
+iconSizeValue.textContent = `${Math.round(unitIconSize)} px`;
+markInteracted();
+draw();
+});
+
+unitStrengthInput.addEventListener('input', () => {
+const unit = getSelectedUnitRef();
+if (!unit) return;
+
+const value = sanitizeStrength(parseFloat(unitStrengthInput.value));
+const inserted = upsertCurrentStrengthKeyframe(unit);
+inserted.frame.strength = value;
+unit.strength = value;
+factionDefaultStrength[selectedUnit.faction] = value;
+unitStrengthInput.value = String(value);
+unitStrengthValue.textContent = `${value}`;
+if (inserted.created) {
+renderBottomTimeline();
+} else {
+updateTimelineMarkersSelection();
+updateKeyframeMeta();
+}
+markInteracted();
+draw();
+});
+
+unitTypeInputs.forEach((input) => {
+input.addEventListener('change', () => {
+if (!input.checked) return;
+
+const selectedType = input.value;
+defaultUnitType = selectedType;
+const unit = getSelectedUnitRef();
+if (unit) {
+unit.type = selectedType;
+}
+
+markInteracted();
+draw();
+});
 });
 
 smoothInput.addEventListener('input', draw);
@@ -1103,7 +1671,18 @@ if (event.button !== 0) return;
 event.preventDefault();
 setPlaying(false);
 timelineScrubActive = true;
-seekTimelineByClientX(event.clientX);
+timelineScrubTrack = timelineTrack;
+seekTimelineByClientX(event.clientX, timelineTrack);
+draw();
+});
+
+timelineStrengthTrack.addEventListener('mousedown', (event) => {
+if (event.button !== 0) return;
+event.preventDefault();
+setPlaying(false);
+timelineScrubActive = true;
+timelineScrubTrack = timelineStrengthTrack;
+seekTimelineByClientX(event.clientX, timelineStrengthTrack);
 draw();
 });
 
@@ -1186,6 +1765,9 @@ drawUnitsLayer();
 setDuration(animationState.duration);
 setCurrentTime(animationState.currentTime);
 resize();
+unitIconSize = clamp(parseFloat(iconSizeInput.value), 6, 28);
+iconSizeValue.textContent = `${Math.round(unitIconSize)} px`;
+defaultUnitType = getUnitTypeSelection();
 syncUnitRadiusControl();
 frontWidthValue.textContent = Number(frontWidthInput.value).toFixed(2);
 chronoState.startDateMsUtc = parseDateInputToUtcMs(startDateInput.value);
@@ -1193,3 +1775,7 @@ chronoState.dayDuration = clamp(parseFloat(dayDurationInput.value), 0.1, 600);
 updateDayDurationLabel();
 updateSimDateTime();
 renderBottomTimeline();
+
+if (!loadStateFromLocalStorage(false)) {
+setSaveStatus('Состояние сохранения: нет данных');
+}

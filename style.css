@@ -120,6 +120,29 @@ input[type="date"] {
 	margin-top: 8px;
 }
 
+.save-group {
+	margin-top: 10px;
+	margin-bottom: 10px;
+}
+
+.save-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 6px;
+}
+
+.save-grid button {
+	margin-top: 0;
+	padding: 7px;
+	font-size: 11px;
+}
+
+#saveStatus {
+	margin-top: 8px;
+	color: #9ba4b7;
+	min-height: 14px;
+}
+
 .compact-hint {
 	margin-top: 8px;
 	margin-bottom: 0;
@@ -178,7 +201,26 @@ button:hover {
 	text-overflow: ellipsis;
 }
 
-#timelineTrack {
+.timeline-row {
+	display: grid;
+	grid-template-columns: 78px 1fr;
+	align-items: center;
+	gap: 8px;
+}
+
+.timeline-row + .timeline-row {
+	margin-top: 6px;
+}
+
+.timeline-row-label {
+	font-size: 11px;
+	color: #b5b8c4;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+
+#timelineTrack,
+#timelineStrengthTrack {
 	position: relative;
 	height: 26px;
 	border-radius: 8px;
@@ -188,7 +230,12 @@ button:hover {
 	overflow: hidden;
 }
 
-#timelineMarkers {
+#timelineStrengthTrack {
+	background: linear-gradient(180deg, rgba(255, 186, 46, 0.15) 0%, rgba(255, 120, 24, 0.16) 100%);
+}
+
+#timelineMarkers,
+#timelineStrengthMarkers {
 	position: absolute;
 	inset: 0;
 	pointer-events: auto;
@@ -214,7 +261,18 @@ button:hover {
 	box-shadow: 0 0 0 2px rgba(255, 230, 107, 0.35);
 }
 
-#timelinePlayhead {
+.timeline-marker.strength-marker {
+	background: #ffc477;
+	border-color: #302116;
+}
+
+.timeline-marker.strength-marker.active {
+	background: #ffd94d;
+	box-shadow: 0 0 0 2px rgba(255, 205, 84, 0.35);
+}
+
+#timelinePlayhead,
+#timelineStrengthPlayhead {
 	position: absolute;
 	top: 0;
 	bottom: 0;
@@ -232,5 +290,9 @@ button:hover {
 
 	#timelineDock {
 		left: 12px;
+	}
+
+	.timeline-row {
+		grid-template-columns: 70px 1fr;
 	}
 }

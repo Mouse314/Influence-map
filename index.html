@@ -18,7 +18,7 @@
 
 	<div id="ui-panel">
 		<h3>Управление картой</h3>
-		<div class="hint">ЛКМ по карте: добавить. ЛКМ по дивизии: выбрать/перетащить. ПКМ по дивизии: удалить. Колесо: зум. Средняя кнопка или Space + ЛКМ: перемещение карты.</div>
+		<div class="hint">ЛКМ по карте: добавить. ЛКМ по дивизии: выбрать/перетащить. ПКМ по дивизии: удалить. Колесо: зум. Средняя кнопка или Shift + ЛКМ: перемещение карты. Space: пуск/пауза. ←/→: шаг по кадру.</div>
 
 		<div class="radio-group">
 			<label><input type="radio" name="faction" value="1" checked> 🔵 Синие (Союзники)</label>
@@ -27,6 +27,20 @@
 
 		<label>Радиус выбранной дивизии: <span id="unitRadiusValue">-</span>
 			<input type="range" id="unitRadius" min="10" max="180" value="70" disabled>
+		</label>
+
+		<label>Размер иконок дивизий (глобально): <span id="iconSizeValue">10 px</span>
+			<input type="range" id="iconSize" min="6" max="28" value="10">
+		</label>
+
+		<div class="radio-group">
+			<label><input type="radio" name="unitType" value="circle" checked> Круг (универсальная)</label>
+			<label><input type="radio" name="unitType" value="rect"> Прямоугольник (пехотная)</label>
+			<label><input type="radio" name="unitType" value="diamond"> Ромб (танковая)</label>
+		</div>
+
+		<label>Прочность выбранной дивизии: <span id="unitStrengthValue">-</span>
+			<input type="range" id="unitStrength" min="1" max="100" step="1" value="70" disabled>
 		</label>
 
 		<label>Плотность фронта (Сглаживание):
@@ -60,6 +74,17 @@
 			<div class="hint compact-hint" id="keyframeMeta">Ключи выбранной: -</div>
 		</div>
 
+		<div class="radio-group save-group">
+			<div class="save-grid">
+				<button id="saveLocalBtn" type="button">Сохранить в браузер</button>
+				<button id="loadLocalBtn" type="button">Загрузить из браузера</button>
+				<button id="exportJsonBtn" type="button">Экспорт JSON</button>
+				<button id="importJsonBtn" type="button">Импорт JSON</button>
+			</div>
+			<input type="file" id="importJsonInput" accept="application/json,.json" hidden>
+			<div class="hint compact-hint" id="saveStatus">Состояние сохранения: нет данных</div>
+		</div>
+
 		<button id="clearBtn">Очистить карту</button>
 	</div>
 
@@ -68,9 +93,19 @@
 			<span id="timelineSelectedLabel">Выберите дивизию, чтобы увидеть ее ключи</span>
 			<span id="timelineCurrentLabel">0.0 / 120 c</span>
 		</div>
-		<div id="timelineTrack" role="slider" aria-valuemin="0" aria-valuemax="120" aria-valuenow="0">
-			<div id="timelineMarkers"></div>
-			<div id="timelinePlayhead"></div>
+		<div class="timeline-row">
+			<span class="timeline-row-label">Позиция</span>
+			<div id="timelineTrack" role="slider" aria-valuemin="0" aria-valuemax="120" aria-valuenow="0">
+				<div id="timelineMarkers"></div>
+				<div id="timelinePlayhead"></div>
+			</div>
+		</div>
+		<div class="timeline-row">
+			<span class="timeline-row-label">Прочность</span>
+			<div id="timelineStrengthTrack">
+				<div id="timelineStrengthMarkers"></div>
+				<div id="timelineStrengthPlayhead"></div>
+			</div>
 		</div>
 	</div>
 
